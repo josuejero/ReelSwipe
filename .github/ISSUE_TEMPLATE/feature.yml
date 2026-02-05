@@ -1,0 +1,18 @@
+name: Feature request
+description: Propose a new feature.
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Acceptance criteria
+      description: Bullet list of what "done" means.

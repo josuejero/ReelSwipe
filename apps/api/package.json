@@ -1,0 +1,20 @@
+{
+  "name": "reelswipe-api",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "deploy": "wrangler deploy",
+    "db:local:reset": "wrangler d1 migrations apply DB --local && wrangler d1 execute DB --local --command=\"PRAGMA foreign_keys=ON;\"",
+    "db:remote:apply": "wrangler d1 migrations apply DB",
+    "db:local:count": "wrangler d1 execute DB --local --command=\"SELECT COUNT(*) AS n FROM movies;\"",
+    "db:remote:count": "wrangler d1 execute DB --command=\"SELECT COUNT(*) AS n FROM movies;\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"(add lint later)\"",
+    "test": "echo \"(add unit tests later)\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0"
+  }
+}

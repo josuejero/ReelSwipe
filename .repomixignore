@@ -1,0 +1,2 @@
+apps/web/cloudflare-env.d.ts
+*.svg

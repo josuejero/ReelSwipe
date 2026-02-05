@@ -1,0 +1,44 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "reelswipe-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-12-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "CORS_ORIGIN": "http://localhost:3000",
+    "LOG_SAMPLE_RATE": "1.0",
+    "REQUEST_LOG_RETENTION_DAYS": "30"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "reelswipe_dev",
+      "database_id": "<PASTE_UUID_HERE>",
+      "preview_database_id": "DB"
+    }
+  ],
+  "env": {
+    "prod": {
+      "name": "reelswipe-api-prod",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "reelswipe_prod",
+          "database_id": "<PASTE_PROD_DB_ID>"
+        }
+      ],
+      "vars": {
+        "CORS_ORIGIN": "https://<YOUR_WEB_PROD_DOMAIN>",
+        "LOG_SAMPLE_RATE": "0.2",
+        "REQUEST_LOG_RETENTION_DAYS": "14"
+      },
+      "triggers": {
+        "crons": ["10 5 * * *"]
+      }
+    }
+  }
+}

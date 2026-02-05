@@ -1,0 +1,4555 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.github/
+  ISSUE_TEMPLATE/
+    bug.yml
+    feature.yml
+  workflows/
+    ci.yml
+    deploy.yml
+    train-eval.yml
+  PULL_REQUEST_TEMPLATE.md
+apps/
+  api/
+    migrations/
+      0001_init.sql
+      0002_phase1_seed_catalog.sql
+      0003_phase2_events_and_tmdb.sql
+      0004_phase3_genres_recs_profile.sql
+      0005_phase4_ranker_and_eval.sql
+      0006_phase5_metrics_and_observability.sql
+      0007_phase6_offline_ml.sql
+    src/
+      lib/
+        crypto.ts
+        db.ts
+        http.ts
+        log.ts
+        random.ts
+        ranker.ts
+        sync.ts
+        tmdb.ts
+      index.ts
+      types.ts
+    package.json
+    tsconfig.json
+    wrangler.jsonc
+  web/
+    .vscode/
+      settings.json
+    public/
+      _headers
+    src/
+      app/
+        metrics/
+          page.tsx
+        profile/
+          page.tsx
+        globals.css
+        layout.tsx
+        page.tsx
+      components/
+        ClientDeck.tsx
+        MovieCard.tsx
+        SwipeDeck.tsx
+      lib/
+        api.ts
+    .gitignore
+    eslint.config.mjs
+    next.config.ts
+    open-next.config.ts
+    package.json
+    postcss.config.mjs
+    README.md
+    tsconfig.json
+    wrangler.jsonc
+docs/
+  adr/
+    0000-template.md
+    0001-cloudflare-opennext-d1.md
+  runbook.md
+e2e/
+  metrics.spec.ts
+scripts/
+  smoke-prod.sh
+tools/
+  ci/
+    api-smoke.mjs
+  eval/
+    eval.mjs
+  metrics/
+    summary.mjs
+  ml/
+    eval_offline.mjs
+    make_load_sql.mjs
+    snapshot.mjs
+    train_itemitem_cf.mjs
+.gitignore
+.prettierignore
+.prettierrc.json
+.repomixignore
+package.json
+playwright.config.ts
+pnpm-workspace.yaml
+README.md
+turbo.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".github/ISSUE_TEMPLATE/bug.yml">
+name: Bug report
+description: Something is broken.
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: What did you expect vs what happened?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs / screenshots
+</file>
+
+<file path=".github/ISSUE_TEMPLATE/feature.yml">
+name: Feature request
+description: Propose a new feature.
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Acceptance criteria
+      description: Bullet list of what "done" means.
+</file>
+
+<file path=".github/workflows/ci.yml">
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format (check)
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration smoke
+        run: pnpm test:integration
+
+      - name: Build
+        run: pnpm build
+
+      - name: Eval (deterministic sample)
+        run: node tools/eval/eval.mjs --out-md artifacts/eval/report.md --out-json artifacts/eval/report.json
+
+      - name: Upload eval artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: artifacts/eval/
+
+  e2e:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps
+
+      - name: Start API (background)
+        run: pnpm --dir apps/api wrangler dev --port 8787 &
+
+      - name: Start Web (background)
+        env:
+          NEXT_PUBLIC_API_BASE: http://localhost:8787
+          API_ADMIN_TOKEN: ${{ secrets.API_ADMIN_TOKEN }}
+        run: pnpm --dir apps/web dev --port 3000 &
+
+      - name: Wait for Web
+        run: |
+          node -e "const t=setInterval(async()=>{try{const r=await fetch('http://localhost:3000'); if(r.ok){clearInterval(t); process.exit(0)}}catch{}},500); setTimeout(()=>{console.error('timeout'); process.exit(1)},30000)"
+
+      - name: Run Playwright
+        env:
+          E2E_BASE_URL: http://localhost:3000
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+</file>
+
+<file path=".github/workflows/deploy.yml">
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy API
+        run: pnpm --dir apps/api wrangler deploy --env ${{ inputs.environment }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Build Web
+        run: pnpm --dir apps/web build
+        env:
+          NEXT_PUBLIC_API_BASE: ${{ secrets.PROD_API_BASE }}
+
+      - name: Deploy Web
+        run: pnpm --dir apps/web deploy --env ${{ inputs.environment }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+</file>
+
+<file path=".github/workflows/train-eval.yml">
+name: Train + Eval (Phase 6)
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: "Snapshot id folder name (e.g. 2025-12-30)"
+        required: true
+        default: "2025-12-30"
+      k:
+        description: "Neighbors per item"
+        required: true
+        default: "30"
+
+jobs:
+  train_eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install
+
+      - name: Train
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          K: ${{ inputs.k }}
+        run: |
+          MODEL_VERSION="cf_itemitem_${SNAPSHOT_ID}"
+          node tools/ml/train_itemitem_cf.mjs \
+            --snapshot artifacts/ml/snapshots/$SNAPSHOT_ID \
+            --out artifacts/ml/models/$MODEL_VERSION \
+            --model-version "$MODEL_VERSION" \
+            --k "$K" \
+            --min-co 2
+
+      - name: Eval
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+        run: |
+          MODEL_VERSION="cf_itemitem_${SNAPSHOT_ID}"
+          node tools/ml/eval_offline.mjs \
+            --snapshot artifacts/ml/snapshots/$SNAPSHOT_ID \
+            --model artifacts/ml/models/$MODEL_VERSION \
+            --out artifacts/ml/models/$MODEL_VERSION
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6-${{ inputs.snapshot_id }}
+          path: artifacts/ml/models/
+          retention-days: 30
+</file>
+
+<file path=".github/PULL_REQUEST_TEMPLATE.md">
+## What changed?
+
+## Why?
+
+## How to test
+- [ ] `pnpm lint`
+- [ ] `pnpm typecheck`
+- [ ] `pnpm test`
+- [ ] Manual: (steps)
+
+## Screenshots (if UI)
+
+## Checklist
+- [ ] Docs updated (if needed)
+- [ ] No secrets committed
+- [ ] Small, reviewable PR
+</file>
+
+<file path="apps/api/migrations/0001_init.sql">
+-- Phase 0: minimal schema for sanity checks
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+INSERT OR REPLACE INTO app_meta(key, value)
+VALUES ('phase', '0');
+</file>
+
+<file path="apps/api/migrations/0002_phase1_seed_catalog.sql">
+-- Phase 1: demo sessions + seeded catalog
+
+-- Track the current phase
+INSERT OR REPLACE INTO app_meta(key, value)
+VALUES ('phase', '1');
+
+-- Demo sessions (no auth)
+CREATE TABLE IF NOT EXISTS demo_sessions (
+  session_id TEXT PRIMARY KEY,
+  seed INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+-- Seeded catalog (small and reliable)
+CREATE TABLE IF NOT EXISTS movies (
+  movie_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  year INTEGER,
+  poster_url TEXT,
+  genres_json TEXT,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_movies_title ON movies(title);
+
+-- Minimal seed set (replace later with a larger curated list)
+-- Posters use placeholders so Phase 1 is zero-dependency.
+INSERT OR REPLACE INTO movies(
+  movie_id, title, year, poster_url, genres_json, created_at_ms, updated_at_ms
+) VALUES
+  ('seed-001', 'Night Train', 2019, 'https://placehold.co/600x900?text=Night+Train', '["Thriller"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-002', 'Paper Suns', 2021, 'https://placehold.co/600x900?text=Paper+Suns', '["Drama"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-003', 'Static Summer', 2018, 'https://placehold.co/600x900?text=Static+Summer', '["Romance"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-004', 'Orbit Kids', 2022, 'https://placehold.co/600x900?text=Orbit+Kids', '["Family","Adventure"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-005', 'Rust & Neon', 2020, 'https://placehold.co/600x900?text=Rust+%26+Neon', '["Sci-Fi"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-006', 'Loud Library', 2017, 'https://placehold.co/600x900?text=Loud+Library', '["Comedy"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-007', 'Blue Signal', 2016, 'https://placehold.co/600x900?text=Blue+Signal', '["Mystery"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-008', 'Cold Orchard', 2023, 'https://placehold.co/600x900?text=Cold+Orchard', '["Horror"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-009', 'Seven Bridges', 2015, 'https://placehold.co/600x900?text=Seven+Bridges', '["Action"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-010', 'Glass Weekend', 2014, 'https://placehold.co/600x900?text=Glass+Weekend', '["Indie"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-011', 'Beacon Road', 2013, 'https://placehold.co/600x900?text=Beacon+Road', '["Crime"]', strftime('%s','now')*1000, strftime('%s','now')*1000),
+  ('seed-012', 'Moonfold', 2012, 'https://placehold.co/600x900?text=Moonfold', '["Fantasy"]', strftime('%s','now')*1000, strftime('%s','now')*1000);
+</file>
+
+<file path="apps/api/migrations/0003_phase2_events_and_tmdb.sql">
+-- Phase 2: impressions + swipe logging + TMDb catalog
+
+INSERT OR REPLACE INTO app_meta(key, value)
+VALUES ('phase', '2');
+
+-- Extend movies to support TMDb (keep poster_url as full URL for UI compatibility)
+ALTER TABLE movies ADD COLUMN tmdb_id INTEGER;
+ALTER TABLE movies ADD COLUMN source TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_movies_tmdb_id
+  ON movies(tmdb_id)
+  WHERE tmdb_id IS NOT NULL;
+
+-- Impression log (one row per item served)
+CREATE TABLE IF NOT EXISTS recommendation_impressions (
+  impression_id TEXT PRIMARY KEY,
+  deck_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  movie_id TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  reason_code TEXT NOT NULL,
+  ts_ms INTEGER NOT NULL,
+  request_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_impressions_session_ts
+  ON recommendation_impressions(session_id, ts_ms);
+
+CREATE INDEX IF NOT EXISTS idx_impressions_deck_rank
+  ON recommendation_impressions(deck_id, rank);
+
+-- Swipe log (idempotent by event_id)
+CREATE TABLE IF NOT EXISTS swipe_events (
+  event_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  deck_id TEXT NOT NULL,
+  movie_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('like','skip')),
+  ts_ms INTEGER NOT NULL,
+  dwell_ms INTEGER,
+  request_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_swipes_session_ts
+  ON swipe_events(session_id, ts_ms);
+
+CREATE INDEX IF NOT EXISTS idx_swipes_movie_action
+  ON swipe_events(movie_id, action);
+
+-- TMDb sync visibility
+CREATE TABLE IF NOT EXISTS tmdb_sync_log (
+  run_id TEXT PRIMARY KEY,
+  started_at_ms INTEGER NOT NULL,
+  finished_at_ms INTEGER,
+  status TEXT NOT NULL,
+  inserted INTEGER DEFAULT 0,
+  updated INTEGER DEFAULT 0,
+  error TEXT
+);
+</file>
+
+<file path="apps/api/migrations/0004_phase3_genres_recs_profile.sql">
+-- Phase 3: genre dictionary + movie_genres join + baseline recommender support
+
+INSERT OR REPLACE INTO app_meta(key, value)
+VALUES ('phase', '3');
+
+-- TMDb genre dictionary
+CREATE TABLE IF NOT EXISTS tmdb_genres (
+  genre_id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+-- Join table: movies -> genres (many-to-many)
+CREATE TABLE IF NOT EXISTS movie_genres (
+  movie_id TEXT NOT NULL,
+  genre_id INTEGER NOT NULL,
+  PRIMARY KEY (movie_id, genre_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_movie_genres_movie_id ON movie_genres(movie_id);
+CREATE INDEX IF NOT EXISTS idx_movie_genres_genre_id ON movie_genres(genre_id);
+
+-- Backfill join table from movies.genres_json (stored as JSON array of TMDb genre IDs)
+-- Note: D1 supports SQLite JSON functions like json_each().
+INSERT OR IGNORE INTO movie_genres(movie_id, genre_id)
+SELECT m.movie_id, CAST(j.value AS INTEGER)
+FROM movies m, json_each(m.genres_json) j
+WHERE m.genres_json IS NOT NULL
+  AND json_valid(m.genres_json) = 1;
+
+-- Convenience view: movie_id -> JSON array of genre names
+CREATE VIEW IF NOT EXISTS v_movie_genre_names AS
+SELECT
+  mg.movie_id AS movie_id,
+  json_group_array(g.name) AS genre_names_json
+FROM movie_genres mg
+JOIN tmdb_genres g ON g.genre_id = mg.genre_id
+GROUP BY mg.movie_id;
+</file>
+
+<file path="apps/api/migrations/0005_phase4_ranker_and_eval.sql">
+-- Phase 4: two-stage ranker logging + eval support
+
+INSERT OR REPLACE INTO app_meta(key, value)
+VALUES ('phase', '4');
+
+-- Add model metadata to impressions
+ALTER TABLE recommendation_impressions ADD COLUMN model_version TEXT;
+ALTER TABLE recommendation_impressions ADD COLUMN score REAL;
+
+-- Optional: attach an anonymous user id to swipe events
+ALTER TABLE swipe_events ADD COLUMN anon_user_id TEXT;
+
+-- Indexes for time-window stats + evaluation joins
+CREATE INDEX IF NOT EXISTS idx_impressions_session_deck
+  ON recommendation_impressions(session_id, deck_id);
+
+CREATE INDEX IF NOT EXISTS idx_impressions_model_ts
+  ON recommendation_impressions(model_version, ts_ms);
+
+CREATE INDEX IF NOT EXISTS idx_swipes_ts_movie
+  ON swipe_events(ts_ms, movie_id);
+
+CREATE INDEX IF NOT EXISTS idx_swipes_anon_ts
+  ON swipe_events(anon_user_id, ts_ms);
+</file>
+
+<file path="apps/api/migrations/0006_phase5_metrics_and_observability.sql">
+-- Phase 5: Metrics + Observability
+
+-- Request-level logs (for metrics like p50 latency)
+CREATE TABLE IF NOT EXISTS request_logs (
+  id TEXT PRIMARY KEY,
+  req_id TEXT NOT NULL,
+  route TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  dur_ms INTEGER NOT NULL,
+  ts_ms INTEGER NOT NULL
+);
+
+-- Fast time-window queries
+CREATE INDEX IF NOT EXISTS idx_request_logs_ts_ms ON request_logs(ts_ms);
+CREATE INDEX IF NOT EXISTS idx_request_logs_route_ts ON request_logs(route, ts_ms);
+
+-- Helpful indexes for existing metrics queries
+CREATE INDEX IF NOT EXISTS idx_swipe_events_ts_ms ON swipe_events(ts_ms);
+CREATE INDEX IF NOT EXISTS idx_reco_impressions_ts_ms ON recommendation_impressions(ts_ms);
+</file>
+
+<file path="apps/api/migrations/0007_phase6_offline_ml.sql">
+-- Phase 6: Offline ML model registry + CF neighbors
+
+INSERT OR REPLACE INTO app_meta(key, value)
+VALUES ('phase', '6');
+
+-- Registry of trained models and their metrics
+CREATE TABLE IF NOT EXISTS model_versions (
+  model_version TEXT PRIMARY KEY,
+  created_at_ms INTEGER NOT NULL,
+  snapshot_id TEXT NOT NULL,
+  algo TEXT NOT NULL,
+  params_json TEXT NOT NULL,
+  metrics_json TEXT,
+  notes TEXT
+);
+
+-- Item-item neighbors for implicit-feedback collaborative filtering
+CREATE TABLE IF NOT EXISTS cf_item_neighbors (
+  model_version TEXT NOT NULL,
+  movie_id TEXT NOT NULL,
+  neighbor_movie_id TEXT NOT NULL,
+  score REAL NOT NULL,
+  PRIMARY KEY (model_version, movie_id, neighbor_movie_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cf_neighbors_lookup
+  ON cf_item_neighbors(model_version, movie_id, score DESC);
+
+-- App-level pointer to which model is active (set by admin endpoint or SQL)
+INSERT OR IGNORE INTO app_meta(key, value)
+VALUES ('current_model_version', 'two_stage_v2');
+</file>
+
+<file path="apps/api/src/lib/crypto.ts">
+export async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+</file>
+
+<file path="apps/api/src/lib/db.ts">
+import type { Env } from "../types";
+import type { TwoStageCandidate } from "./ranker";
+
+export type RequestLogRow = {
+  req_id: string;
+  route: string;
+  method: string;
+  path: string;
+  status: number;
+  dur_ms: number;
+  ts_ms: number;
+};
+
+export type Metrics24h = {
+  window_ms: number;
+  since_ms: number;
+  swipes: number;
+  likes: number;
+  skips: number;
+  impressions: number;
+  like_rate: number | null;
+  skip_rate: number | null;
+  p50_deck_ms: number | null;
+};
+
+async function scalarInt(db: D1Database, sql: string, ...params: any[]) {
+  const out = await db
+    .prepare(sql)
+    .bind(...params)
+    .first<{ n: number }>();
+  return Number(out?.n ?? 0);
+}
+
+async function medianMs(db: D1Database, sinceMs: number, route: string): Promise<number | null> {
+  const n = await scalarInt(
+    db,
+    `SELECT COUNT(*) AS n FROM request_logs WHERE ts_ms >= ? AND route = ?`,
+    sinceMs,
+    route,
+  );
+
+  if (n <= 0) return null;
+
+  if (n % 2 === 1) {
+    const offset = Math.floor(n / 2);
+    const row = await db
+      .prepare(
+        `SELECT dur_ms FROM request_logs
+         WHERE ts_ms >= ? AND route = ?
+         ORDER BY dur_ms
+         LIMIT 1 OFFSET ?`,
+      )
+      .bind(sinceMs, route, offset)
+      .first<{ dur_ms: number }>();
+    return row ? Number(row.dur_ms) : null;
+  }
+
+  const o1 = n / 2 - 1;
+  const o2 = n / 2;
+
+  const r1 = await db
+    .prepare(
+      `SELECT dur_ms FROM request_logs
+       WHERE ts_ms >= ? AND route = ?
+       ORDER BY dur_ms
+       LIMIT 1 OFFSET ?`,
+    )
+    .bind(sinceMs, route, o1)
+    .first<{ dur_ms: number }>();
+
+  const r2 = await db
+    .prepare(
+      `SELECT dur_ms FROM request_logs
+       WHERE ts_ms >= ? AND route = ?
+       ORDER BY dur_ms
+       LIMIT 1 OFFSET ?`,
+    )
+    .bind(sinceMs, route, o2)
+    .first<{ dur_ms: number }>();
+
+  if (!r1 || !r2) return null;
+  return Math.round((Number(r1.dur_ms) + Number(r2.dur_ms)) / 2);
+}
+
+export async function recordRequestLog(db: D1Database, row: RequestLogRow) {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO request_logs (id, req_id, route, method, path, status, dur_ms, ts_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(id, row.req_id, row.route, row.method, row.path, row.status, row.dur_ms, row.ts_ms)
+    .run();
+}
+
+export async function pruneRequestLogs(
+  db: D1Database,
+  cutoffTsMs: number,
+): Promise<void> {
+  await db.prepare("DELETE FROM request_logs WHERE ts_ms < ?").bind(cutoffTsMs).run();
+}
+
+export async function countMovies(db: D1Database): Promise<number> {
+  const row = await db.prepare("SELECT COUNT(*) AS n FROM movies").first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+export async function getMetrics24h(
+  db: D1Database,
+  windowMs = 24 * 60 * 60 * 1000,
+): Promise<Metrics24h> {
+  const sinceMs = Date.now() - windowMs;
+
+  const swipes = await scalarInt(
+    db,
+    `SELECT COUNT(*) AS n FROM swipe_events WHERE ts_ms >= ?`,
+    sinceMs,
+  );
+  const likes = await scalarInt(
+    db,
+    `SELECT COUNT(*) AS n FROM swipe_events WHERE ts_ms >= ? AND action = 'like'`,
+    sinceMs,
+  );
+  const skips = await scalarInt(
+    db,
+    `SELECT COUNT(*) AS n FROM swipe_events WHERE ts_ms >= ? AND action = 'skip'`,
+    sinceMs,
+  );
+  const impressions = await scalarInt(
+    db,
+    `SELECT COUNT(*) AS n FROM recommendation_impressions WHERE ts_ms >= ?`,
+    sinceMs,
+  );
+
+  const like_rate = swipes > 0 ? likes / swipes : null;
+  const skip_rate = swipes > 0 ? skips / swipes : null;
+  const p50_deck_ms = await medianMs(db, sinceMs, `GET /v1/deck`);
+
+  return {
+    window_ms: windowMs,
+    since_ms: sinceMs,
+    swipes,
+    likes,
+    skips,
+    impressions,
+    like_rate,
+    skip_rate,
+    p50_deck_ms,
+  };
+}
+
+export type MovieRow = {
+  movie_id: string;
+  tmdb_id: number | null;
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+  genres_json: string | null; // JSON array of TMDb genre IDs
+  source: string | null;
+};
+
+export type UpsertMovie = {
+  movie_id: string;
+  tmdb_id: number | null;
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+  genres_json: string; // JSON array
+  source: string;
+};
+
+export type GenreRow = {
+  genre_id: number;
+  name: string;
+};
+
+export type SwipeAction = "like" | "skip";
+
+export type CandidateMovie = {
+  movie_id: string;
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+  likes: number;
+  skips: number;
+};
+
+function nowMs() {
+  return Date.now();
+}
+
+async function one<T>(stmt: D1PreparedStatement): Promise<T | null> {
+  const r = await stmt.first<T>();
+  return r ?? null;
+}
+
+export async function getPhase(env: Env): Promise<string> {
+  const row = await one<{ value: string }>(
+    env.DB.prepare("SELECT value FROM app_meta WHERE key = ?1").bind("phase"),
+  );
+  return row?.value ?? "unknown";
+}
+
+export async function setMeta(env: Env, key: string, value: string) {
+  await env.DB.prepare("INSERT OR REPLACE INTO app_meta(key, value) VALUES (?1, ?2)")
+    .bind(key, value)
+    .run();
+}
+
+export async function getMeta(env: Env, key: string): Promise<string | null> {
+  const row = await one<{ value: string }>(
+    env.DB.prepare("SELECT value FROM app_meta WHERE key = ?1").bind(key),
+  );
+  return row?.value ?? null;
+}
+
+export async function getCurrentModelVersion(env: Env): Promise<string> {
+  const value = await getMeta(env, "current_model_version");
+  return value ?? "two_stage_v2";
+}
+
+export async function modelVersionExists(env: Env, modelVersion: string): Promise<boolean> {
+  const row = await one<{ n: number }>(
+    env.DB.prepare("SELECT COUNT(*) AS n FROM model_versions WHERE model_version = ?1").bind(modelVersion),
+  );
+  return Number(row?.n ?? 0) > 0;
+}
+
+export async function setCurrentModelVersion(env: Env, modelVersion: string) {
+  await setMeta(env, "current_model_version", modelVersion);
+}
+
+export async function upsertGenres(env: Env, genres: GenreRow[]) {
+  const t = nowMs();
+  const stmts = genres.map((g) =>
+    env.DB.prepare(
+      `INSERT INTO tmdb_genres(genre_id, name, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(genre_id) DO UPDATE SET
+           name = excluded.name,
+           updated_at_ms = excluded.updated_at_ms`,
+    ).bind(g.genre_id, g.name, t),
+  );
+
+  if (stmts.length > 0) await env.DB.batch(stmts);
+  return { upserted: stmts.length };
+}
+
+export async function listMovies(env: Env, limit = 5000): Promise<MovieRow[]> {
+  const r = await env.DB.prepare(
+    `SELECT movie_id, tmdb_id, title, year, poster_url, genres_json, source
+       FROM movies
+       ORDER BY updated_at_ms DESC
+       LIMIT ?1`,
+  )
+    .bind(limit)
+    .all<MovieRow>();
+
+  return (r.results ?? []) as MovieRow[];
+}
+
+export async function upsertMovies(env: Env, movies: UpsertMovie[], nowMs: number) {
+  const stmts = movies.map((m) =>
+    env.DB.prepare(
+      `INSERT INTO movies(movie_id, tmdb_id, title, year, poster_url, genres_json, source, created_at_ms, updated_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+         ON CONFLICT(movie_id) DO UPDATE SET
+           tmdb_id = excluded.tmdb_id,
+           title = excluded.title,
+           year = excluded.year,
+           poster_url = excluded.poster_url,
+           genres_json = excluded.genres_json,
+           source = excluded.source,
+           updated_at_ms = excluded.updated_at_ms`,
+    ).bind(m.movie_id, m.tmdb_id, m.title, m.year, m.poster_url, m.genres_json, m.source, nowMs),
+  );
+
+  if (stmts.length > 0) await env.DB.batch(stmts);
+  return { upserted: stmts.length };
+}
+
+export async function rebuildMovieGenresForMovies(env: Env, movieIds: string[]) {
+  if (movieIds.length === 0) return { rebuilt: 0 };
+  const idsJson = JSON.stringify(movieIds);
+
+  await env.DB.prepare(
+    `DELETE FROM movie_genres
+       WHERE movie_id IN (SELECT value FROM json_each(?1))`,
+  )
+    .bind(idsJson)
+    .run();
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO movie_genres(movie_id, genre_id)
+       SELECT m.movie_id, CAST(j.value AS INTEGER)
+       FROM movies m, json_each(m.genres_json) j
+       WHERE m.movie_id IN (SELECT value FROM json_each(?1))
+         AND m.genres_json IS NOT NULL
+         AND json_valid(m.genres_json) = 1`,
+  )
+    .bind(idsJson)
+    .run();
+
+  return { rebuilt: movieIds.length };
+}
+
+export async function getGenreNamesForMovies(env: Env, movieIds: string[]) {
+  if (movieIds.length === 0) return new Map<string, string[]>();
+  const idsJson = JSON.stringify(movieIds);
+
+  const r = await env.DB.prepare(
+    `SELECT mg.movie_id as movie_id,
+              json_group_array(g.name) as names_json
+       FROM movie_genres mg
+       JOIN tmdb_genres g ON g.genre_id = mg.genre_id
+       WHERE mg.movie_id IN (SELECT value FROM json_each(?1))
+       GROUP BY mg.movie_id`,
+  )
+    .bind(idsJson)
+    .all<{ movie_id: string; names_json: string }>();
+
+  const out = new Map<string, string[]>();
+  for (const row of r.results ?? []) {
+    try {
+      const arr = JSON.parse(row.names_json) as string[];
+      out.set(row.movie_id, Array.isArray(arr) ? arr : []);
+    } catch {
+      out.set(row.movie_id, []);
+    }
+  }
+  return out;
+}
+
+export async function getGenreIdsForMovies(env: Env, movieIds: string[]) {
+  if (movieIds.length === 0) return new Map<string, number[]>();
+  const idsJson = JSON.stringify(movieIds);
+
+  const r = await env.DB.prepare(
+    `SELECT mg.movie_id as movie_id,
+              json_group_array(mg.genre_id) as ids_json
+       FROM movie_genres mg
+       WHERE mg.movie_id IN (SELECT value FROM json_each(?1))
+       GROUP BY mg.movie_id`,
+  )
+    .bind(idsJson)
+    .all<{ movie_id: string; ids_json: string }>();
+
+  const out = new Map<string, number[]>();
+  for (const row of r.results ?? []) {
+    try {
+      const arr = JSON.parse(row.ids_json) as number[];
+      out.set(row.movie_id, Array.isArray(arr) ? arr : []);
+    } catch {
+      out.set(row.movie_id, []);
+    }
+  }
+  return out;
+}
+
+export async function getCandidateMoviesForDeck(
+  env: Env,
+  sessionId: string,
+  limit: number,
+): Promise<CandidateMovie[]> {
+  const r = await env.DB.prepare(
+    `WITH stats AS (
+         SELECT
+           movie_id,
+           SUM(CASE WHEN action = 'like' THEN 1 ELSE 0 END) AS likes,
+           SUM(CASE WHEN action = 'skip' THEN 1 ELSE 0 END) AS skips
+         FROM swipe_events
+         GROUP BY movie_id
+       )
+       SELECT
+         m.movie_id,
+         m.title,
+         m.year,
+         m.poster_url,
+         COALESCE(s.likes, 0) AS likes,
+         COALESCE(s.skips, 0) AS skips
+       FROM movies m
+       LEFT JOIN stats s ON s.movie_id = m.movie_id
+       WHERE m.movie_id NOT IN (
+         SELECT movie_id FROM swipe_events WHERE session_id = ?1
+       )
+       ORDER BY COALESCE(s.likes, 0) DESC, COALESCE(s.skips, 0) ASC, m.updated_at_ms DESC
+       LIMIT ?2`,
+  )
+    .bind(sessionId, Math.max(limit, 100))
+    .all<CandidateMovie>();
+
+  return (r.results ?? []) as CandidateMovie[];
+}
+
+export async function getTwoStageCandidates(
+  env: Env,
+  args: {
+    sessionId: string;
+    nowMs: number;
+    windowMs: number;
+    limit: number;
+    topGenres: number;
+  },
+): Promise<TwoStageCandidate[]> {
+  const { sessionId, nowMs, windowMs, limit, topGenres } = args;
+  const cutoff = nowMs - windowMs;
+
+  const r = await env.DB.prepare(
+    `WITH seen AS (
+         SELECT movie_id FROM recommendation_impressions WHERE session_id = ?1
+         UNION
+         SELECT movie_id FROM swipe_events WHERE session_id = ?1
+       ),
+       recent AS (
+         SELECT
+           movie_id,
+           SUM(CASE WHEN action = 'like' THEN 1 ELSE 0 END) AS likes_recent,
+           SUM(CASE WHEN action = 'skip' THEN 1 ELSE 0 END) AS skips_recent
+         FROM swipe_events
+         WHERE ts_ms >= ?2
+         GROUP BY movie_id
+       ),
+       base AS (
+         SELECT
+           m.movie_id,
+           m.title,
+           m.year,
+           m.poster_url,
+           m.source,
+           COALESCE(r.likes_recent, 0) AS likes_recent,
+           COALESCE(r.skips_recent, 0) AS skips_recent
+         FROM movies m
+         LEFT JOIN recent r ON r.movie_id = m.movie_id
+         WHERE m.movie_id NOT IN (SELECT movie_id FROM seen)
+       ),
+       top_genres AS (
+         SELECT
+           mg.genre_id AS genre_id,
+           SUM(CASE WHEN se.action = 'like' THEN 1 ELSE -1 END) AS score
+         FROM swipe_events se
+         JOIN movie_genres mg ON mg.movie_id = se.movie_id
+         WHERE se.session_id = ?1
+         GROUP BY mg.genre_id
+         ORDER BY score DESC
+         LIMIT ?3
+       ),
+       popular_recent AS (
+         SELECT
+           movie_id, title, year, poster_url, source,
+           likes_recent, skips_recent,
+           'popular_recent' AS bucket
+         FROM base
+         ORDER BY
+           ((likes_recent + 1.0) / (likes_recent + skips_recent + 2.0)) DESC,
+           (likes_recent + skips_recent) DESC
+         LIMIT 140
+       ),
+       genre_match AS (
+         SELECT
+           b.movie_id, b.title, b.year, b.poster_url, b.source,
+           b.likes_recent, b.skips_recent,
+           'genre_match' AS bucket
+         FROM base b
+         JOIN movie_genres mg ON mg.movie_id = b.movie_id
+         JOIN top_genres tg ON tg.genre_id = mg.genre_id
+         GROUP BY b.movie_id
+         ORDER BY
+           COUNT(*) DESC,
+           (b.likes_recent + b.skips_recent) DESC
+         LIMIT 140
+       ),
+       explore AS (
+         SELECT
+           movie_id, title, year, poster_url, source,
+           likes_recent, skips_recent,
+           'explore' AS bucket
+         FROM base
+         ORDER BY RANDOM()
+         LIMIT 60
+       ),
+       unioned AS (
+         SELECT * FROM popular_recent
+         UNION ALL
+         SELECT * FROM genre_match
+         UNION ALL
+         SELECT * FROM explore
+       )
+       SELECT
+         u.movie_id,
+         u.title,
+         u.year,
+         u.poster_url,
+         u.source,
+         MAX(u.likes_recent) AS likes_recent,
+         MAX(u.skips_recent) AS skips_recent
+       FROM unioned u
+       GROUP BY u.movie_id
+       LIMIT ?4;`,
+  )
+    .bind(sessionId, cutoff, topGenres, limit)
+    .all<TwoStageCandidate>();
+
+  return (r.results ?? []) as TwoStageCandidate[];
+}
+
+export async function getCFCandidates(
+  env: Env,
+  args: {
+    sessionId: string;
+    modelVersion: string;
+    limit: number;
+    maxLikes?: number;
+  },
+): Promise<TwoStageCandidate[]> {
+  const { sessionId, modelVersion, limit, maxLikes = 20 } = args;
+  const likedLimit = Math.max(1, Number(maxLikes));
+
+  const liked = await env.DB.prepare(
+    `SELECT movie_id
+       FROM swipe_events
+      WHERE session_id = ?1 AND action = 'like'
+      ORDER BY ts_ms DESC
+      LIMIT ?2`,
+  )
+    .bind(sessionId, likedLimit)
+    .all<{ movie_id: string }>();
+
+  const likedIds: string[] = [];
+  const seenLikes = new Set<string>();
+  for (const row of liked.results ?? []) {
+    const id = String(row?.movie_id ?? "").trim();
+    if (!id || seenLikes.has(id)) continue;
+    seenLikes.add(id);
+    likedIds.push(id);
+  }
+
+  if (!likedIds.length) return [];
+
+  const placeholders = likedIds.map((_, i) => `?${i + 3}`).join(",");
+  const limitPlaceholder = `?${likedIds.length + 3}`;
+  const safeLimit = Math.max(1, limit);
+
+  const sql = `WITH seen AS (
+      SELECT movie_id FROM recommendation_impressions WHERE session_id = ?1
+      UNION
+      SELECT movie_id FROM swipe_events WHERE session_id = ?1
+    ),
+    neighbors AS (
+      SELECT neighbor_movie_id AS movie_id,
+             SUM(score) AS cf_score
+        FROM cf_item_neighbors
+       WHERE model_version = ?2
+         AND movie_id IN (${placeholders})
+       GROUP BY neighbor_movie_id
+    ),
+    recent AS (
+      SELECT
+        movie_id,
+        SUM(CASE WHEN action='like' THEN 1 ELSE 0 END) AS likes_recent,
+        SUM(CASE WHEN action='skip' THEN 1 ELSE 0 END) AS skips_recent
+      FROM swipe_events
+      WHERE ts_ms >= (strftime('%s','now')*1000 - 14*24*60*60*1000)
+      GROUP BY movie_id
+    )
+    SELECT
+      m.movie_id,
+      m.title,
+      m.year,
+      m.poster_url,
+      COALESCE(r.likes_recent, 0) AS likes_recent,
+      COALESCE(r.skips_recent, 0) AS skips_recent,
+      'cf_neighbors' AS source,
+      n.cf_score AS cf_score
+    FROM neighbors n
+    JOIN movies m ON m.movie_id = n.movie_id
+    LEFT JOIN recent r ON r.movie_id = m.movie_id
+    WHERE m.movie_id NOT IN (SELECT movie_id FROM seen)
+    ORDER BY n.cf_score DESC
+    LIMIT ${limitPlaceholder};`;
+
+  const stmt = env.DB.prepare(sql);
+  const bound = stmt.bind(sessionId, modelVersion, ...likedIds, safeLimit);
+  const res = await bound.all<TwoStageCandidate>();
+
+  return (res.results ?? []).map((row) => ({
+    ...row,
+    likes_recent: Number(row.likes_recent ?? 0),
+    skips_recent: Number(row.skips_recent ?? 0),
+    cf_score: Number(row.cf_score ?? 0),
+  }));
+}
+
+export async function getUserGenrePrefs(env: Env, sessionId: string) {
+  const r = await env.DB.prepare(
+    `SELECT
+         mg.genre_id AS genre_id,
+         SUM(CASE WHEN se.action = 'like' THEN 1 ELSE -1 END) AS score
+       FROM swipe_events se
+       JOIN movie_genres mg ON mg.movie_id = se.movie_id
+       WHERE se.session_id = ?1
+       GROUP BY mg.genre_id`,
+  )
+    .bind(sessionId)
+    .all<{ genre_id: number; score: number }>();
+
+  const prefs = new Map<number, number>();
+  for (const row of r.results ?? []) prefs.set(row.genre_id, row.score);
+  return prefs;
+}
+
+export async function recordImpressions(
+  env: Env,
+  rows: {
+    impression_id: string;
+    deck_id: string;
+    session_id: string;
+    movie_id: string;
+    rank: number;
+    reason_code: string;
+    ts_ms: number;
+    model_version?: string | null;
+    score?: number | null;
+    request_id?: string;
+  }[],
+) {
+  const stmts = rows.map((r) =>
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO recommendation_impressions(
+          impression_id, deck_id, session_id, movie_id, rank, reason_code, model_version, score, ts_ms, request_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+    ).bind(
+      r.impression_id,
+      r.deck_id,
+      r.session_id,
+      r.movie_id,
+      r.rank,
+      r.reason_code,
+      r.model_version ?? null,
+      r.score ?? null,
+      r.ts_ms,
+      r.request_id ?? null,
+    ),
+  );
+
+  if (stmts.length > 0) await env.DB.batch(stmts);
+  return { inserted: stmts.length };
+}
+
+export async function recordSwipe(
+  env: Env,
+  args: {
+    event_id: string;
+    session_id: string;
+    deck_id: string;
+    movie_id: string;
+    action: SwipeAction;
+    ts_ms: number;
+    dwell_ms?: number | null;
+    request_id?: string;
+  },
+) {
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO swipe_events(
+         event_id, session_id, deck_id, movie_id, action, ts_ms, dwell_ms, request_id
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+  )
+    .bind(
+      args.event_id,
+      args.session_id,
+      args.deck_id,
+      args.movie_id,
+      args.action,
+      args.ts_ms,
+      args.dwell_ms ?? null,
+      args.request_id ?? null,
+    )
+    .run();
+}
+
+export async function getProfileSummary(env: Env, sessionId: string) {
+  const counts = await env.DB.prepare(
+    `SELECT action, COUNT(*) AS c
+       FROM swipe_events
+       WHERE session_id = ?1
+       GROUP BY action`,
+  )
+    .bind(sessionId)
+    .all<{ action: SwipeAction; c: number }>();
+
+  let likes = 0;
+  let skips = 0;
+  for (const row of counts.results ?? []) {
+    if (row.action === "like") likes = row.c;
+    if (row.action === "skip") skips = row.c;
+  }
+
+  const topGenres = await env.DB.prepare(
+    `SELECT
+         g.genre_id AS genre_id,
+         g.name AS name,
+         SUM(CASE WHEN se.action = 'like' THEN 1 ELSE 0 END) AS likes,
+         SUM(CASE WHEN se.action = 'skip' THEN 1 ELSE 0 END) AS skips,
+         (SUM(CASE WHEN se.action = 'like' THEN 1 ELSE 0 END) - SUM(CASE WHEN se.action = 'skip' THEN 1 ELSE 0 END)) AS net
+       FROM swipe_events se
+       JOIN movie_genres mg ON mg.movie_id = se.movie_id
+       JOIN tmdb_genres g ON g.genre_id = mg.genre_id
+       WHERE se.session_id = ?1
+       GROUP BY g.genre_id
+       ORDER BY net DESC, likes DESC
+       LIMIT 10`,
+  )
+    .bind(sessionId)
+    .all<{ genre_id: number; name: string; likes: number; skips: number; net: number }>();
+
+  const recent = await env.DB.prepare(
+    `SELECT
+         se.event_id AS event_id,
+         se.action AS action,
+         se.ts_ms AS ts_ms,
+         m.movie_id AS movie_id,
+         m.title AS title,
+         m.year AS year,
+         m.poster_url AS poster_url
+       FROM swipe_events se
+       JOIN movies m ON m.movie_id = se.movie_id
+       WHERE se.session_id = ?1
+       ORDER BY se.ts_ms DESC
+       LIMIT 20`,
+  )
+    .bind(sessionId)
+    .all<{
+      event_id: string;
+      action: SwipeAction;
+      ts_ms: number;
+      movie_id: string;
+      title: string;
+      year: number | null;
+      poster_url: string | null;
+    }>();
+
+  const movieIds = (recent.results ?? []).map((r) => r.movie_id);
+  const genreMap = await getGenreNamesForMovies(env, movieIds);
+
+  const recentWithGenres = (recent.results ?? []).map((r) => ({
+    ...r,
+    genres: genreMap.get(r.movie_id) ?? [],
+  }));
+
+  return {
+    likes,
+    skips,
+    total: likes + skips,
+    top_genres: topGenres.results ?? [],
+    recent: recentWithGenres,
+  };
+}
+</file>
+
+<file path="apps/api/src/lib/http.ts">
+export function withCors(resp: Response, origin = "*") {
+  const headers = new Headers(resp.headers);
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  headers.set(
+    "Access-Control-Allow-Headers",
+    "content-type, x-request-id, x-idempotency-key, authorization"
+  );
+  return new Response(resp.body, { status: resp.status, headers });
+}
+
+export function json(payload: unknown, status = 200, extra?: HeadersInit) {
+  const headers = new Headers(extra);
+  headers.set("content-type", "application/json");
+  return new Response(JSON.stringify(payload), { status, headers });
+}
+
+export function requestId() {
+  return crypto.randomUUID();
+}
+</file>
+
+<file path="apps/api/src/lib/log.ts">
+export type LogLevel = "info" | "warn" | "error";
+
+type LogFields = Record<string, unknown>;
+
+export function log(level: LogLevel, fields: LogFields) {
+  const record = {
+    ts: new Date().toISOString(),
+    level,
+    ...fields,
+  };
+
+  const line = JSON.stringify(record);
+
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.log(line);
+}
+</file>
+
+<file path="apps/api/src/lib/random.ts">
+export function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function shuffleInPlace<T>(arr: T[], seed: number) {
+  const rand = mulberry32(seed);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+</file>
+
+<file path="apps/api/src/lib/ranker.ts">
+export type RankerMode = "two_stage" | "baseline";
+
+export type UserGenrePrefs = Map<number, number>;
+
+export type TwoStageCandidate = {
+  movie_id: string;
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+  likes_recent: number;
+  skips_recent: number;
+  source: string | null;
+  cf_score?: number;
+};
+
+export type RankedMovie = {
+  id: string;
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  genres: string[];
+  reasonCode: string;
+  score: number;
+};
+
+function clamp01(x: number) {
+  return Math.max(0, Math.min(1, x));
+}
+
+function popScore(likes: number, skips: number) {
+  const total = likes + skips;
+  const likeRate = (likes + 1) / (total + 2);
+  const volume = Math.log1p(total);
+  return likeRate * volume;
+}
+
+function prefScore(genreIds: number[], prefs: UserGenrePrefs) {
+  if (genreIds.length === 0) return 0;
+  let s = 0;
+  for (const gid of genreIds) s += prefs.get(gid) ?? 0;
+  return s / genreIds.length;
+}
+
+export function rerankTwoStage(args: {
+  candidates: TwoStageCandidate[];
+  genreNamesByMovieId: Map<string, string[]>;
+  genreIdsByMovieId: Map<string, number[]>;
+  prefs: UserGenrePrefs;
+  limit: number;
+}): RankedMovie[] {
+  const { candidates, genreNamesByMovieId, genreIdsByMovieId, prefs, limit } = args;
+
+  const popRaw = candidates.map((c) => popScore(c.likes_recent, c.skips_recent));
+  const popMax = Math.max(1e-9, ...popRaw);
+
+  const prefRaw = candidates.map((c) => {
+    const gids = genreIdsByMovieId.get(c.movie_id) ?? [];
+    return prefScore(gids, prefs);
+  });
+  const prefMaxAbs = Math.max(1e-9, ...prefRaw.map((x) => Math.abs(x)));
+
+  const cfRaw = candidates.map((c) => (c.cf_score == null ? 0 : Number(c.cf_score)));
+  const cfMax = Math.max(1e-9, ...cfRaw);
+
+  const scored = candidates.map((c, i) => {
+    const pop = popRaw[i] / popMax;
+    const pref = prefRaw[i] / prefMaxAbs;
+    const sourceBoost = c.source === "tmdb_trending_week" ? 0.15 : 0;
+    const cf = cfRaw[i] / cfMax;
+    const score =
+      0.45 * clamp01(pop) +
+      0.25 * clamp01((pref + 1) / 2) +
+      0.25 * clamp01(cf) +
+      sourceBoost;
+
+    const reasonCode =
+      c.source === "tmdb_trending_week"
+        ? "hybrid_trending_week"
+        : cf > 0.25
+        ? "hybrid_cf"
+        : pref > 0.15
+        ? "hybrid_personalized"
+        : "hybrid_popular_recent";
+
+    return {
+      id: c.movie_id,
+      title: c.title,
+      year: c.year,
+      posterUrl: c.poster_url,
+      genres: genreNamesByMovieId.get(c.movie_id) ?? [],
+      reasonCode,
+      score,
+    } satisfies RankedMovie;
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const maxPerTopGenre = 4;
+  const counts = new Map<string, number>();
+
+  const out: RankedMovie[] = [];
+  for (const m of scored) {
+    const top = m.genres?.[0] ?? "(none)";
+    const n = counts.get(top) ?? 0;
+    if (n >= maxPerTopGenre) continue;
+    counts.set(top, n + 1);
+    out.push(m);
+    if (out.length >= limit) break;
+  }
+
+  if (out.length < limit) {
+    const picked = new Set(out.map((m) => m.id));
+    for (const m of scored) {
+      if (out.length >= limit) break;
+      if (picked.has(m.id)) continue;
+      out.push(m);
+      picked.add(m.id);
+    }
+  }
+
+  return out;
+}
+</file>
+
+<file path="apps/api/src/lib/sync.ts">
+import type { Env } from "../types";
+import {
+  fetchMovieGenres,
+  fetchTrendingWeek,
+  releaseYear,
+  tmdbPosterUrl,
+} from "./tmdb";
+import { rebuildMovieGenresForMovies, upsertGenres, upsertMovies } from "./db";
+
+export async function syncGenres(env: Env) {
+  if (!env.TMDB_API_KEY) return { upserted: 0 };
+
+  const { genres } = await fetchMovieGenres(env);
+  const rows = genres.map((g) => ({ genre_id: g.id, name: g.name }));
+  return upsertGenres(env, rows);
+}
+
+export async function syncTrendingMovies(env: Env) {
+  if (!env.TMDB_API_KEY) return { upserted: 0 };
+
+  const data = await fetchTrendingWeek(env);
+  if (!Array.isArray(data.results) || data.results.length === 0) {
+    return { upserted: 0 };
+  }
+
+  const now = Date.now();
+  const movies = data.results.map((m) => ({
+    movie_id: String(m.id),
+    tmdb_id: m.id,
+    title: m.title,
+    year: releaseYear(m.release_date),
+    poster_url: tmdbPosterUrl(m.poster_path),
+    genres_json: JSON.stringify(m.genre_ids ?? []),
+    source: "tmdb_trending_week",
+  }));
+
+  const result = await upsertMovies(env, movies, now);
+  await rebuildMovieGenresForMovies(env, movies.map((m) => m.movie_id));
+
+  return result;
+}
+</file>
+
+<file path="apps/api/src/lib/tmdb.ts">
+import type { Env } from "../types";
+
+const TMDB_BASE = "https://api.themoviedb.org";
+
+export type TmdbMovie = {
+  id: number;
+  title: string;
+  release_date?: string;
+  poster_path?: string | null;
+  genre_ids?: number[];
+};
+
+export type TmdbGenre = {
+  id: number;
+  name: string;
+};
+
+type TmdbPaged<T> = {
+  page: number;
+  results: T[];
+};
+
+type TmdbGenreList = {
+  genres: TmdbGenre[];
+};
+
+function assertKey(env: Env) {
+  if (!env.TMDB_API_KEY) throw new Error("TMDB_API_KEY is missing");
+}
+
+export function tmdbPosterUrl(posterPath?: string | null) {
+  if (!posterPath) return null;
+  return `https://image.tmdb.org/t/p/w500${posterPath}`;
+}
+
+export function releaseYear(releaseDate?: string) {
+  if (!releaseDate) return null;
+  const y = Number(releaseDate.slice(0, 4));
+  return Number.isFinite(y) ? y : null;
+}
+
+async function fetchTmdbJson<T>(
+  env: Env,
+  path: string,
+  params: Record<string, string | number | undefined> = {}
+): Promise<T> {
+  assertKey(env);
+
+  const url = new URL(TMDB_BASE + path);
+  url.searchParams.set("api_key", env.TMDB_API_KEY!);
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined) continue;
+    url.searchParams.set(k, String(v));
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      accept: "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`TMDb ${res.status} ${res.statusText}: ${body}`);
+  }
+
+  return (await res.json()) as T;
+}
+
+export async function fetchPopular(env: Env, page = 1) {
+  return fetchTmdbJson<TmdbPaged<TmdbMovie>>(env, "/3/movie/popular", { page });
+}
+
+export async function fetchTrendingWeek(env: Env) {
+  return fetchTmdbJson<TmdbPaged<TmdbMovie>>(env, "/3/trending/movie/week");
+}
+
+export async function fetchMovieGenres(env: Env) {
+  return fetchTmdbJson<TmdbGenreList>(env, "/3/genre/movie/list", { language: "en-US" });
+}
+</file>
+
+<file path="apps/api/src/index.ts">
+import type { Env } from "./types";
+import { json, withCors } from "./lib/http";
+import {
+  countMovies,
+  getCandidateMoviesForDeck,
+  getCurrentModelVersion,
+  getGenreIdsForMovies,
+  getGenreNamesForMovies,
+  getMetrics24h,
+  getPhase,
+  getProfileSummary,
+  getUserGenrePrefs,
+  getTwoStageCandidates,
+  getCFCandidates,
+  modelVersionExists,
+  pruneRequestLogs,
+  recordImpressions,
+  recordRequestLog,
+  recordSwipe,
+  setCurrentModelVersion,
+  type SwipeAction,
+} from "./lib/db";
+import { rerankTwoStage, RankedMovie, TwoStageCandidate } from "./lib/ranker";
+import { log } from "./lib/log";
+import { syncGenres, syncTrendingMovies } from "./lib/sync";
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function ok<T extends Record<string, unknown>>(payload: T, reqId: string) {
+  return json({ ok: true, request_id: reqId, ...payload });
+}
+
+function badRequest(message: string, reqId: string, extra: Record<string, unknown> = {}) {
+  return json({ ok: false, request_id: reqId, error: { message, ...extra } }, 400);
+}
+
+function unauthorized(reqId: string) {
+  return json({ ok: false, request_id: reqId, error: { message: "unauthorized" } }, 401);
+}
+
+function getAdminToken(req: Request) {
+  const auth = req.headers.get("authorization");
+  if (auth && auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  const x = req.headers.get("x-admin-token");
+  if (x) return x.trim();
+  return null;
+}
+
+async function requireAdmin(req: Request, env: Env) {
+  const token = getAdminToken(req);
+  return Boolean(env.ADMIN_TOKEN && token && token === env.ADMIN_TOKEN);
+}
+
+function routeKey(method: string, pathname: string) {
+  if (pathname.startsWith("/v1/admin")) return `${method} /v1/admin/*`;
+  if (pathname.startsWith("/v1/events")) return `${method} /v1/events/*`;
+  if (pathname.startsWith("/v1")) return `${method} ${pathname}`;
+  return `${method} ${pathname}`;
+}
+
+function withRequestId(res: Response, reqId: string) {
+  const headers = new Headers(res.headers);
+  headers.set("x-request-id", reqId);
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
+
+function shouldLogRequest(env: Env): boolean {
+  const raw = env.LOG_SAMPLE_RATE ?? "1";
+  const rate = Number(raw);
+  if (!Number.isFinite(rate)) return true;
+  if (rate <= 0) return false;
+  if (rate >= 1) return true;
+  return Math.random() < rate;
+}
+
+async function buildDeck(env: Env, sessionId: string, limit: number, reqId: string) {
+  const now = Date.now();
+  const mode = (env.RANKER_MODE ?? "two_stage") as "two_stage" | "baseline";
+
+  if (mode === "baseline") {
+    const candidates = await getCandidateMoviesForDeck(env, sessionId, limit);
+    if (candidates.length === 0)
+      return {
+        deck_id: null as string | null,
+        deck: [] as any[],
+        reason: "no candidates",
+        model_version: "baseline_v1",
+      };
+
+    const movieIds = candidates.map((c) => c.movie_id);
+    const nameMap = await getGenreNamesForMovies(env, movieIds);
+    const idMap = await getGenreIdsForMovies(env, movieIds);
+    const prefs = await getUserGenrePrefs(env, sessionId);
+
+    const denom = Math.max(1, ...Array.from(prefs.values()).map((v) => Math.abs(v)));
+
+    const scored: RankedMovie[] = candidates.map((c) => {
+      const gids = idMap.get(c.movie_id) ?? [];
+      const pref =
+        gids.length > 0 ? gids.reduce((sum, id) => sum + (prefs.get(id) ?? 0), 0) / gids.length : 0;
+
+      const total = c.likes + c.skips;
+      const pop = ((c.likes + 1) / (total + 2)) * Math.log1p(total);
+      const score = 0.75 * pop + 0.25 * (pref / denom);
+
+      return {
+        id: c.movie_id,
+        title: c.title,
+        year: c.year,
+        posterUrl: c.poster_url,
+        genres: nameMap.get(c.movie_id) ?? [],
+        reasonCode: "baseline_mix",
+        score,
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const deck = scored.slice(0, limit);
+
+    const deckId = crypto.randomUUID();
+    const modelVersion = "baseline_v1";
+
+    await recordImpressions(
+      env,
+      deck.map((m, i) => ({
+        impression_id: crypto.randomUUID(),
+        deck_id: deckId,
+        session_id: sessionId,
+        movie_id: m.id,
+        rank: i + 1,
+        reason_code: m.reasonCode,
+        model_version: modelVersion,
+        score: m.score,
+        ts_ms: now,
+        request_id: reqId,
+      })),
+    );
+
+    return { deck_id: deckId, deck, model_version: modelVersion };
+  }
+
+  const modelVersion = await getCurrentModelVersion(env);
+  const cfCandidates = await getCFCandidates(env, {
+    sessionId,
+    modelVersion,
+    limit: 200,
+  });
+
+  const baseCandidates = await getTwoStageCandidates(env, {
+    sessionId,
+    nowMs: now,
+    windowMs: 14 * 86400_000,
+    limit: Math.max(220, limit * 10),
+    topGenres: 5,
+  });
+
+  if (cfCandidates.length === 0 && baseCandidates.length === 0) {
+    return {
+      deck_id: null as string | null,
+      deck: [] as any[],
+      reason: "no candidates",
+      model_version: modelVersion,
+    };
+  }
+
+  const byId = new Map<string, TwoStageCandidate>();
+  for (const candidate of [...cfCandidates, ...baseCandidates]) {
+    const prev = byId.get(candidate.movie_id);
+    if (!prev) {
+      byId.set(candidate.movie_id, candidate);
+      continue;
+    }
+    byId.set(candidate.movie_id, {
+      ...prev,
+      likes_recent: Math.max(prev.likes_recent ?? 0, candidate.likes_recent ?? 0),
+      skips_recent: Math.max(prev.skips_recent ?? 0, candidate.skips_recent ?? 0),
+      cf_score: Math.max(prev.cf_score ?? 0, candidate.cf_score ?? 0),
+      source: prev.source === "cf_neighbors" ? prev.source : candidate.source,
+    });
+  }
+
+  const candidates = Array.from(byId.values());
+  const movieIds = candidates.map((c) => c.movie_id);
+  const nameMap = await getGenreNamesForMovies(env, movieIds);
+  const idMap = await getGenreIdsForMovies(env, movieIds);
+  const prefs = await getUserGenrePrefs(env, sessionId);
+
+  const ranked = rerankTwoStage({
+    candidates,
+    genreNamesByMovieId: nameMap,
+    genreIdsByMovieId: idMap,
+    prefs,
+    limit,
+  });
+
+  const deckId = crypto.randomUUID();
+
+  await recordImpressions(
+    env,
+    ranked.map((m, i) => ({
+      impression_id: crypto.randomUUID(),
+      deck_id: deckId,
+      session_id: sessionId,
+      movie_id: m.id,
+      rank: i + 1,
+      reason_code: m.reasonCode,
+      model_version: modelVersion,
+      score: m.score,
+      ts_ms: now,
+      request_id: reqId,
+    })),
+  );
+
+  return { deck_id: deckId, deck: ranked, model_version: modelVersion };
+}
+
+async function handle(req: Request, env: Env, reqId: string, origin: string) {
+  if (req.method === "OPTIONS") {
+    return withCors(new Response(null, { status: 204 }), origin);
+  }
+
+  const url = new URL(req.url);
+  const pathname = url.pathname;
+
+  if (req.method === "GET" && pathname === "/health") {
+    const phase = await getPhase(env);
+    return withCors(ok({ phase }, reqId), origin);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/deck") {
+    const sessionId = url.searchParams.get("session_id");
+    const limit = clamp(Number(url.searchParams.get("limit") || "20"), 1, 50);
+    if (!sessionId) return withCors(badRequest("session_id is required", reqId), origin);
+
+    const payload = await buildDeck(env, sessionId, limit, reqId);
+    return withCors(json(payload, 200), origin);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/profile") {
+    const sessionId = url.searchParams.get("session_id");
+    if (!sessionId) return withCors(badRequest("session_id is required", reqId), origin);
+
+    const profile = await getProfileSummary(env, sessionId);
+    return withCors(json({ session_id: sessionId, ...profile }, 200), origin);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/metrics") {
+    if (!(await requireAdmin(req, env))) {
+      return withCors(unauthorized(reqId), origin);
+    }
+
+    const raw = url.searchParams.get("window") ?? "24h";
+    const match = raw.match(/^([0-9]{1,3})h$/);
+    const hours = match ? Math.max(1, Math.min(72, Number(match[1]))) : 24;
+    const windowMs = hours * 60 * 60 * 1000;
+
+    const data = await getMetrics24h(env.DB, windowMs);
+    const resp = withCors(ok(data, reqId), origin);
+    resp.headers.set("cache-control", "no-store");
+    return resp;
+  }
+
+  if (req.method === "POST" && pathname === "/v1/events/swipe") {
+    const idem = req.headers.get("x-idempotency-key") || crypto.randomUUID();
+    const body = (await req.json().catch(() => null)) as any;
+
+    if (!body?.session_id) return withCors(badRequest("session_id is required", reqId), origin);
+    if (!body?.deck_id) return withCors(badRequest("deck_id is required", reqId), origin);
+    if (!body?.movie_id) return withCors(badRequest("movie_id is required", reqId), origin);
+    if (body?.action !== "like" && body?.action !== "skip")
+      return withCors(badRequest("action must be like|skip", reqId), origin);
+
+    await recordSwipe(env, {
+      event_id: String(idem),
+      session_id: String(body.session_id),
+      deck_id: String(body.deck_id),
+      movie_id: String(body.movie_id),
+      action: body.action as SwipeAction,
+      ts_ms: Number(body.ts_ms || Date.now()),
+      dwell_ms: body.dwell_ms == null ? null : Number(body.dwell_ms),
+      request_id: reqId,
+    });
+
+    return withCors(ok({}, reqId), origin);
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/tmdb/sync-genres") {
+    if (!(await requireAdmin(req, env))) return withCors(unauthorized(reqId), origin);
+    const res = await syncGenres(env);
+    return withCors(ok({ genres: res }, reqId), origin);
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/tmdb/sync") {
+    if (!(await requireAdmin(req, env))) return withCors(unauthorized(reqId), origin);
+
+    try {
+      await syncGenres(env);
+    } catch (e) {
+      console.log({ level: "warn", req_id: reqId, msg: "genre sync failed", err: String(e) });
+    }
+
+    const res = await syncTrendingMovies(env);
+    return withCors(ok({ movies: res }, reqId), origin);
+  }
+
+  if (req.method === "GET" && pathname === "/v1/admin/model") {
+    if (!(await requireAdmin(req, env))) return withCors(unauthorized(reqId), origin);
+
+    const current = await getCurrentModelVersion(env);
+    const known = await env.DB
+      .prepare(
+        `SELECT model_version, snapshot_id, algo, created_at_ms
+           FROM model_versions
+          ORDER BY created_at_ms DESC
+          LIMIT 25`,
+      )
+      .all<{
+        model_version: string;
+        snapshot_id: string;
+        algo: string;
+        created_at_ms: number;
+      }>();
+
+    return withCors(
+      ok({ current_model_version: current, known_models: known.results ?? [] }, reqId),
+      origin,
+    );
+  }
+
+  if (req.method === "POST" && pathname === "/v1/admin/model") {
+    if (!(await requireAdmin(req, env))) return withCors(unauthorized(reqId), origin);
+
+    const body = (await req.json().catch(() => null)) as { model_version?: string } | null;
+    const mv = String(body?.model_version ?? "").trim();
+    if (!mv) return withCors(badRequest("model_version is required", reqId), origin);
+    if (!(await modelVersionExists(env, mv)))
+      return withCors(badRequest("unknown model_version", reqId), origin);
+
+    await setCurrentModelVersion(env, mv);
+    return withCors(ok({ current_model_version: mv }, reqId), origin);
+  }
+
+  return withCors(
+    json({ ok: false, request_id: reqId, error: { message: "not found" } }, 404),
+    origin,
+  );
+}
+
+function retentionDays(env: Env): number {
+  const raw = env.REQUEST_LOG_RETENTION_DAYS ?? "14";
+  const days = Number(raw);
+  if (!Number.isFinite(days) || days <= 0) return 14;
+  return days;
+}
+
+export default {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext) {
+    const start = Date.now();
+    const url = new URL(req.url);
+    const origin = env.CORS_ORIGIN || "*";
+    const route = routeKey(req.method, url.pathname);
+    const reqId = req.headers.get("x-request-id") || crypto.randomUUID();
+
+    let res: Response;
+    let errorMessage: string | undefined;
+
+    try {
+      res = await handle(req, env, reqId, origin);
+    } catch (e: unknown) {
+      errorMessage = e instanceof Error ? e.message : String(e);
+      res = withCors(
+        json({ ok: false, request_id: reqId, error: { message: "internal error" } }, 500),
+        origin,
+      );
+    }
+
+    const durMs = Date.now() - start;
+    const status = res.status;
+
+    const logFields: Record<string, unknown> = {
+      req_id: reqId,
+      route,
+      method: req.method,
+      path: url.pathname,
+      status,
+      dur_ms: durMs,
+    };
+
+    if (errorMessage) logFields.error = errorMessage;
+
+    log(errorMessage ? "error" : "info", logFields);
+
+    if (env.DB && url.pathname !== "/health" && shouldLogRequest(env)) {
+      ctx.waitUntil(
+        recordRequestLog(env.DB, {
+          req_id: reqId,
+          route,
+          method: req.method,
+          path: url.pathname,
+          status,
+          dur_ms: durMs,
+          ts_ms: Date.now(),
+        }),
+      );
+    }
+
+    return withRequestId(res, reqId);
+  },
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    const cutoff = Date.now() - retentionDays(env) * 24 * 60 * 60 * 1000;
+
+    ctx.waitUntil(
+      (async () => {
+        try {
+          await syncTrendingMovies(env);
+        } catch (err) {
+          console.warn("[scheduled] syncTrendingMovies failed", err);
+        }
+      })(),
+    );
+
+    ctx.waitUntil(
+      (async () => {
+        try {
+          await pruneRequestLogs(env.DB, cutoff);
+        } catch (err) {
+          console.warn("[scheduled] pruneRequestLogs failed", err);
+        }
+      })(),
+    );
+
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const total = await countMovies(env.DB);
+          console.info(`[scheduled] movies count=${total}`);
+        } catch (err) {
+          console.warn("[scheduled] countMovies failed", err);
+        }
+      })(),
+    );
+  },
+};
+</file>
+
+<file path="apps/api/src/types.ts">
+export interface Env {
+  DB: D1Database;
+  CORS_ORIGIN?: string;
+
+  // TMDb sync
+  TMDB_API_KEY?: string;
+
+  // Protect admin endpoints
+  ADMIN_TOKEN?: string;
+
+  // Phase 4 configurables
+  RANKER_MODE?: "two_stage" | "baseline";
+
+  // Phase 7 configurables
+  LOG_SAMPLE_RATE?: string;
+  REQUEST_LOG_RETENTION_DAYS?: string;
+}
+</file>
+
+<file path="apps/api/package.json">
+{
+  "name": "reelswipe-api",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "deploy": "wrangler deploy",
+    "db:local:reset": "wrangler d1 migrations apply DB --local && wrangler d1 execute DB --local --command=\"PRAGMA foreign_keys=ON;\"",
+    "db:remote:apply": "wrangler d1 migrations apply DB",
+    "db:local:count": "wrangler d1 execute DB --local --command=\"SELECT COUNT(*) AS n FROM movies;\"",
+    "db:remote:count": "wrangler d1 execute DB --command=\"SELECT COUNT(*) AS n FROM movies;\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"(add lint later)\"",
+    "test": "echo \"(add unit tests later)\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0"
+  }
+}
+</file>
+
+<file path="apps/api/tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "lib": ["es2021", "webworker"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types"],
+    "resolveJsonModule": true,
+    "allowJs": false
+  },
+  "include": ["src"]
+}
+</file>
+
+<file path="apps/api/wrangler.jsonc">
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "reelswipe-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-12-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "CORS_ORIGIN": "http://localhost:3000",
+    "LOG_SAMPLE_RATE": "1.0",
+    "REQUEST_LOG_RETENTION_DAYS": "30"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "reelswipe_dev",
+      "database_id": "<PASTE_UUID_HERE>",
+      "preview_database_id": "DB"
+    }
+  ],
+  "env": {
+    "prod": {
+      "name": "reelswipe-api-prod",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "reelswipe_prod",
+          "database_id": "<PASTE_PROD_DB_ID>"
+        }
+      ],
+      "vars": {
+        "CORS_ORIGIN": "https://<YOUR_WEB_PROD_DOMAIN>",
+        "LOG_SAMPLE_RATE": "0.2",
+        "REQUEST_LOG_RETENTION_DAYS": "14"
+      },
+      "triggers": {
+        "crons": ["10 5 * * *"]
+      }
+    }
+  }
+}
+</file>
+
+<file path="apps/web/.vscode/settings.json">
+{
+	"files.associations": {
+		"wrangler.json": "jsonc"
+	}
+}
+</file>
+
+<file path="apps/web/public/_headers">
+# https://developers.cloudflare.com/workers/static-assets/headers
+# https://opennext.js.org/cloudflare/caching#static-assets-caching
+/_next/static/*
+  Cache-Control: public,max-age=31536000,immutable
+</file>
+
+<file path="apps/web/src/app/metrics/page.tsx">
+export const runtime = "edge";
+
+type MetricsPayload = {
+  window_ms: number;
+  since_ms: number;
+  swipes: number;
+  likes: number;
+  skips: number;
+  impressions: number;
+  like_rate: number | null;
+  skip_rate: number | null;
+  p50_deck_ms: number | null;
+};
+
+function pct(x: number | null) {
+  if (x === null) return "—";
+  return `${Math.round(x * 100)}%`;
+}
+
+function fmtMs(x: number | null) {
+  if (x === null) return "—";
+  return `${x} ms`;
+}
+
+export default async function MetricsPage() {
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
+  const token = process.env.API_ADMIN_TOKEN;
+
+  if (!token) {
+    return (
+      <main style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1>/metrics</h1>
+        <p>
+          Missing <code>API_ADMIN_TOKEN</code>. Add it to <code>apps/web/.env.local</code> (local)
+          and Cloudflare Pages env vars (deploy).
+        </p>
+      </main>
+    );
+  }
+
+  const res = await fetch(`${API_BASE}/v1/metrics?window=24h`, {
+    headers: { "x-admin-token": token },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    const details = res.headers.get("x-request-id");
+
+    return (
+      <main style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1>/metrics</h1>
+        <p>API returned {res.status}</p>
+        {details && (
+          <p>
+            Request id: <code>{details}</code>
+          </p>
+        )}
+        <pre style={{ whiteSpace: "pre-wrap" }}>{body}</pre>
+      </main>
+    );
+  }
+
+  const data = (await res.json()) as MetricsPayload;
+  const since = new Date(data.since_ms).toLocaleString();
+
+  return (
+    <main style={{ padding: 24, fontFamily: "system-ui", maxWidth: 900 }}>
+      <h1 style={{ marginBottom: 8 }}>ReelSwipe Metrics (last 24h)</h1>
+      <p style={{ marginTop: 0, opacity: 0.7 }}>Window start: {since}</p>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 12,
+          marginTop: 16,
+        }}
+      >
+        <Card label="Swipes" value={String(data.swipes)} />
+        <Card label="Impressions" value={String(data.impressions)} />
+        <Card label="Like rate" value={pct(data.like_rate)} />
+        <Card label="Skip rate" value={pct(data.skip_rate)} />
+        <Card label="Median deck latency" value={fmtMs(data.p50_deck_ms)} />
+      </div>
+
+      <details style={{ marginTop: 20 }}>
+        <summary>Raw JSON</summary>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(data, null, 2)}</pre>
+      </details>
+    </main>
+  );
+}
+
+function Card({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(0,0,0,0.12)",
+        borderRadius: 12,
+        padding: 14,
+      }}
+    >
+      <div style={{ fontSize: 12, opacity: 0.7 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6 }}>{value}</div>
+    </div>
+  );
+}
+</file>
+
+<file path="apps/web/src/app/profile/page.tsx">
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { fetchProfile, type ProfilePayload } from "../../lib/api";
+
+function fmt(ts: number) {
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return String(ts);
+  }
+}
+
+export default function ProfilePage() {
+  const [sessionId, setSessionId] = useState<string>("DEMO_SESSION_ID");
+  const [data, setData] = useState<ProfilePayload | null>(null);
+  const [err, setErr] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const topGenres = useMemo(() => data?.top_genres ?? [], [data]);
+  const recent = useMemo(() => data?.recent ?? [], [data]);
+
+  async function load() {
+    setErr("");
+    setLoading(true);
+    try {
+      const res = await fetchProfile(sessionId);
+      setData(res);
+    } catch (e) {
+      setErr(String(e));
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <main className="mx-auto max-w-3xl p-6 space-y-6">
+      <header className="space-y-2">
+        <h1 className="text-2xl font-semibold">Session Profile</h1>
+        <p className="text-sm opacity-80">Quick debug view for Phase 3.</p>
+      </header>
+
+      <section className="flex gap-2 items-end">
+        <div className="flex-1">
+          <label className="block text-sm mb-1">session_id</label>
+          <input
+            className="w-full rounded border px-3 py-2"
+            value={sessionId}
+            onChange={(e) => setSessionId(e.target.value)}
+          />
+        </div>
+        <button className="rounded border px-4 py-2" onClick={load} disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </section>
+
+      {err ? (
+        <div className="rounded border p-3 text-sm">Error: {err}</div>
+      ) : null}
+
+      {data ? (
+        <>
+          <section className="grid grid-cols-3 gap-3">
+            <div className="rounded border p-3">
+              <div className="text-xs opacity-70">Likes</div>
+              <div className="text-xl font-semibold">{data.likes}</div>
+            </div>
+            <div className="rounded border p-3">
+              <div className="text-xs opacity-70">Skips</div>
+              <div className="text-xl font-semibold">{data.skips}</div>
+            </div>
+            <div className="rounded border p-3">
+              <div className="text-xs opacity-70">Total</div>
+              <div className="text-xl font-semibold">{data.total}</div>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h2 className="text-lg font-semibold">Top genres</h2>
+            <div className="rounded border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-black/5">
+                  <tr>
+                    <th className="text-left p-2">Genre</th>
+                    <th className="text-right p-2">Likes</th>
+                    <th className="text-right p-2">Skips</th>
+                    <th className="text-right p-2">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topGenres.map((g) => (
+                    <tr key={g.genre_id} className="border-t">
+                      <td className="p-2">{g.name}</td>
+                      <td className="p-2 text-right">{g.likes}</td>
+                      <td className="p-2 text-right">{g.skips}</td>
+                      <td className="p-2 text-right">{g.net}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h2 className="text-lg font-semibold">Recent swipes</h2>
+            <div className="space-y-2">
+              {recent.map((r) => (
+                <div key={r.event_id} className="rounded border p-3">
+                  <div className="flex justify-between text-sm">
+                    <div className="font-medium">
+                      {r.title} {r.year ? `(${r.year})` : ""}
+                    </div>
+                    <div className="opacity-80">{r.action}</div>
+                  </div>
+                  <div className="text-xs opacity-70 mt-1">{fmt(r.ts_ms)}</div>
+                  <div className="text-xs mt-2">Genres: {(r.genres ?? []).join(", ") || "(none)"}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      ) : null}
+    </main>
+  );
+}
+</file>
+
+<file path="apps/web/src/app/globals.css">
+@import "tailwindcss";
+
+:root {
+	--background: #ffffff;
+	--foreground: #171717;
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--font-sans: var(--font-geist-sans);
+	--font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--background: #0a0a0a;
+		--foreground: #ededed;
+	}
+}
+
+body {
+	background: var(--background);
+	color: var(--foreground);
+	font-family: Arial, Helvetica, sans-serif;
+}
+</file>
+
+<file path="apps/web/src/app/layout.tsx">
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({
+	variable: "--font-geist-sans",
+	subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+	variable: "--font-geist-mono",
+	subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+	title: "ReelSwipe",
+	description: "Phase 3 baseline recommender demo for ReelSwipe",
+};
+
+export default function RootLayout({
+	children,
+}: Readonly<{
+	children: React.ReactNode;
+}>) {
+	return (
+		<html lang="en">
+			<head>
+				<link rel="icon" href="/favicon.svg" type="image/svg+xml"></link>
+			</head>
+			<body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
+		</html>
+	);
+}
+</file>
+
+<file path="apps/web/src/app/page.tsx">
+"use client";
+
+import Link from "next/link";
+import { ClientDeck } from "../components/ClientDeck";
+
+export const dynamic = "force-dynamic";
+
+export default function Page() {
+  return (
+    <main className="min-h-screen bg-[#0b1220] text-white px-4 py-10">
+      <div className="mx-auto max-w-5xl">
+        <header className="space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-4xl font-semibold tracking-tight">ReelSwipe</h1>
+              <p className="mt-1 text-white/70">
+                Phase 4: Two-stage ranking (candidates + rerank), recent-popularity signals, and
+                session taste preferences.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/profile"
+                className="rounded-2xl border border-white/30 px-4 py-2 text-sm hover:border-white/60"
+              >
+                Profile view
+              </Link>
+              <Link
+                href="/metrics"
+                className="rounded-2xl border border-white/30 px-4 py-2 text-sm hover:border-white/60"
+              >
+                Metrics
+              </Link>
+            </div>
+          </div>
+          <p className="text-sm text-white/60">
+            A lightweight SQL candidate set combines recent popularity, genre cues, and trending
+            boosts before a rerank keeps the deck personal and diverse.
+          </p>
+        </header>
+
+        <div className="mt-10 rounded-3xl bg-white/5 p-6 ring-1 ring-white/10">
+          <ClientDeck />
+        </div>
+
+        <footer className="mt-12 text-xs text-white/40">
+          Phase 4 adds a two-stage reranker, recent-popularity smoothing, and evaluation telemetry
+          so we can measure every deck.
+        </footer>
+      </div>
+    </main>
+  );
+}
+</file>
+
+<file path="apps/web/src/components/ClientDeck.tsx">
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { DeckMovie, SwipeAction } from "../lib/api";
+import { fetchDeck, logSwipe } from "../lib/api";
+import { SwipeDeck } from "./SwipeDeck";
+
+function getStoredSessionId() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem("reelswipe.session_id");
+}
+
+function setStoredSessionId(id: string) {
+  window.localStorage.setItem("reelswipe.session_id", id);
+}
+
+export function ClientDeck() {
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState<string | null>(null);
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [deckId, setDeckId] = useState<string | null>(null);
+  const [deck, setDeck] = useState<DeckMovie[]>([]);
+
+  const canReset = useMemo(() => !!sessionId, [sessionId]);
+
+  const loadDeck = useCallback(
+    async (sid: string, silent = false) => {
+      if (!silent) {
+        setStatus("loading");
+        setError(null);
+      }
+      try {
+        const { deck_id, deck } = await fetchDeck(sid, 20);
+        setDeckId(deck_id);
+        setDeck(deck);
+        setStatus("ready");
+      } catch (e) {
+        setStatus("error");
+        setError(e instanceof Error ? e.message : "unknown error");
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function boot() {
+      setStatus("loading");
+      setError(null);
+
+      let sid = getStoredSessionId();
+      if (!sid) {
+        sid = crypto.randomUUID();
+        setStoredSessionId(sid);
+      }
+
+      if (cancelled) return;
+      setSessionId(sid);
+
+      await loadDeck(sid);
+    }
+
+    boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDeck]);
+
+  const onReload = async () => {
+    if (!sessionId) return;
+    await loadDeck(sessionId);
+  };
+
+  const onReset = async () => {
+    const sid = crypto.randomUUID();
+    setStoredSessionId(sid);
+    setSessionId(sid);
+    await loadDeck(sid);
+  };
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="mb-4 flex gap-3">
+        <button
+          type="button"
+          onClick={onReload}
+          className="rounded-2xl bg-white/5 px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/10"
+        >
+          Reload
+        </button>
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={!canReset}
+          className="rounded-2xl bg-white/5 px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/10 disabled:opacity-40"
+        >
+          Reset taste
+        </button>
+      </div>
+
+      {status === "loading" ? (
+        <div className="h-[560px] w-[360px] animate-pulse rounded-3xl bg-white/5" />
+      ) : status === "error" ? (
+        <div className="w-[360px] rounded-3xl bg-red-500/10 p-4 ring-1 ring-red-500/20">
+          <p className="text-sm text-red-200">{error ?? "Failed"}</p>
+          <p className="mt-2 text-xs text-white/60">Check that the API is running and NEXT_PUBLIC_API_BASE is set.</p>
+        </div>
+      ) : deckId ? (
+        <SwipeDeck
+          deck={deck}
+          onEmpty={() => {}}
+          onSwipe={async (movie, action: SwipeAction, dwellMs) => {
+            if (!sessionId || !deckId) return;
+
+            try {
+              await logSwipe({
+                session_id: sessionId,
+                deck_id: deckId,
+                movie_id: movie.id,
+                action,
+                ts_ms: Date.now(),
+                dwell_ms: dwellMs,
+              });
+            } catch (e) {
+              console.warn("failed to log swipe", e);
+            }
+          }}
+        />
+      ) : (
+        <SwipeDeck deck={deck} />
+      )}
+
+      {sessionId ? <p className="mt-4 text-xs text-white/40">Session: {sessionId}</p> : null}
+      {deckId ? <p className="mt-1 text-xs text-white/30">Deck: {deckId.slice(0, 10)}…</p> : null}
+    </div>
+  );
+}
+</file>
+
+<file path="apps/web/src/components/MovieCard.tsx">
+import type { DeckMovie } from "../lib/api";
+
+export function MovieCard({ movie }: { movie: DeckMovie }) {
+  return (
+    <article className="relative h-[520px] w-[340px] overflow-hidden rounded-3xl bg-white/10 ring-1 ring-white/10 shadow-2xl">
+      <div className="absolute inset-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={movie.posterUrl ?? "https://placehold.co/600x900?text=No+Poster"}
+          alt={movie.title}
+          className="h-full w-full object-cover opacity-90"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+      </div>
+
+      {movie.reasonCode ? (
+        <div className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs text-white/90 ring-1 ring-white/10">
+          {movie.reasonCode}
+        </div>
+      ) : null}
+
+      {typeof movie.score === "number" ? (
+        <div className="absolute right-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs text-white/70 ring-1 ring-white/10">
+          {movie.score.toFixed(3)}
+        </div>
+      ) : null}
+
+      <header className="absolute bottom-0 left-0 right-0 p-5">
+        <h2 className="text-xl font-semibold text-white">
+          {movie.title}
+          {movie.year ? <span className="text-white/70"> ({movie.year})</span> : null}
+        </h2>
+        {movie.genres?.length ? (
+          <p className="mt-1 text-sm text-white/70">{movie.genres.join(" • ")}</p>
+        ) : (
+          <p className="mt-1 text-sm text-white/50">&nbsp;</p>
+        )}
+      </header>
+    </article>
+  );
+}
+</file>
+
+<file path="apps/web/src/components/SwipeDeck.tsx">
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent, PointerEvent } from "react";
+import type { DeckMovie } from "../lib/api";
+import { MovieCard } from "./MovieCard";
+
+type SwipeAction = "like" | "skip";
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+export function SwipeDeck({
+  deck,
+  onEmpty,
+  onSwipe,
+}: {
+  deck: DeckMovie[];
+  onEmpty?: () => void;
+  onSwipe?: (movie: DeckMovie, action: SwipeAction, dwellMs: number) => void;
+}) {
+  const [idx, setIdx] = useState(0);
+  const top = deck[idx] ?? null;
+  const next = deck[idx + 1] ?? null;
+
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const shownAtRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    if (top) shownAtRef.current = Date.now();
+    else onEmpty?.();
+  }, [top, onEmpty]);
+
+  const animateOut = useCallback(
+    (action: SwipeAction) => {
+      if (!top) return;
+      const el = cardRef.current;
+      if (!el) return;
+
+      const dx = action === "like" ? 420 : -420;
+      el.style.transition = "transform 220ms ease";
+      el.style.transform = `translate3d(${dx}px, -20px, 0) rotate(${action === "like" ? 12 : -12}deg)`;
+
+      const dwellMs = Math.max(0, Date.now() - shownAtRef.current);
+      window.setTimeout(() => {
+        onSwipe?.(top, action, dwellMs);
+        setIdx((n) => n + 1);
+        if (el) {
+          el.style.transition = "none";
+          el.style.transform = "translate3d(0,0,0) rotate(0deg)";
+        }
+      }, 230);
+    },
+    [top, onSwipe]
+  );
+
+  const snapBack = () => {
+    const el = cardRef.current;
+    if (!el) return;
+    el.style.transition = "transform 180ms ease";
+    el.style.transform = "translate3d(0,0,0) rotate(0deg)";
+    window.setTimeout(() => {
+      if (el) el.style.transition = "none";
+    }, 200);
+  };
+
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (!top) return;
+    startRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    if (!top) return;
+    const start = startRef.current;
+    if (!start) return;
+
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+
+    const el = cardRef.current;
+    if (!el) return;
+
+    const rot = clamp(dx / 22, -18, 18);
+    el.style.transform = `translate3d(${dx}px, ${dy}px, 0) rotate(${rot}deg)`;
+  };
+
+  const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
+    if (!top) return;
+    const start = startRef.current;
+    startRef.current = null;
+    if (!start) return;
+
+    const dx = e.clientX - start.x;
+    if (dx > 120) return animateOut("like");
+    if (dx < -120) return animateOut("skip");
+    snapBack();
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!top) return;
+    if (e.key === "ArrowLeft") animateOut("skip");
+    if (e.key === "ArrowRight") animateOut("like");
+  };
+
+  const skipLabel = useMemo(() => (top ? `Skip ${top.title}` : "Skip"), [top]);
+  const likeLabel = useMemo(() => (top ? `Like ${top.title}` : "Like"), [top]);
+
+  return (
+    <div className="w-[360px] select-none">
+      <div
+        className="relative h-[560px] w-[360px]"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        aria-label="Swipe deck"
+      >
+        {next ? (
+          <div className="absolute inset-0 translate-y-2 scale-[0.98] opacity-60">
+            <MovieCard movie={next} />
+          </div>
+        ) : null}
+
+        {top ? (
+          <div
+            ref={cardRef}
+            className="absolute inset-0 touch-none"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            role="group"
+            aria-roledescription="swipe card"
+          >
+            <MovieCard movie={top} />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex gap-3">
+        <button
+          type="button"
+          onClick={() => top && animateOut("skip")}
+          className="flex-1 rounded-2xl bg-white/5 px-4 py-3 text-sm text-white ring-1 ring-white/10 hover:bg-white/10"
+          aria-label={skipLabel}
+        >
+          ← Skip
+        </button>
+        <button
+          type="button"
+          onClick={() => top && animateOut("like")}
+          className="flex-1 rounded-2xl bg-emerald-500/20 px-4 py-3 text-sm text-white ring-1 ring-emerald-400/30 hover:bg-emerald-500/30"
+          aria-label={likeLabel}
+        >
+          Like →
+        </button>
+      </div>
+
+      <p className="mt-3 text-center text-xs text-white/50">Tip: focus the deck and use ArrowLeft / ArrowRight</p>
+    </div>
+  );
+}
+</file>
+
+<file path="apps/web/src/lib/api.ts">
+export type DeckMovie = {
+  id: string;
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  genres: string[];
+  reasonCode?: string;
+  score?: number;
+};
+
+export type DeckPayload = {
+  deck_id: string | null;
+  deck: DeckMovie[];
+};
+
+export type SwipeAction = "like" | "skip";
+
+export type ProfilePayload = {
+  session_id: string;
+  likes: number;
+  skips: number;
+  total: number;
+  top_genres: { genre_id: number; name: string; likes: number; skips: number; net: number }[];
+  recent: {
+    event_id: string;
+    action: SwipeAction;
+    ts_ms: number;
+    movie_id: string;
+    title: string;
+    year: number | null;
+    poster_url: string | null;
+    genres: string[];
+  }[];
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
+
+async function mustJson(res: Response) {
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
+export async function fetchDeck(sessionId: string, limit = 20): Promise<DeckPayload> {
+  const url = new URL(API_BASE + "/v1/deck");
+  url.searchParams.set("session_id", sessionId);
+  url.searchParams.set("limit", String(limit));
+
+  const res = await fetch(url.toString(), { method: "GET" });
+  return (await mustJson(res)) as DeckPayload;
+}
+
+export async function fetchProfile(sessionId: string): Promise<ProfilePayload> {
+  const url = new URL(API_BASE + "/v1/profile");
+  url.searchParams.set("session_id", sessionId);
+
+  const res = await fetch(url.toString(), { method: "GET" });
+  return (await mustJson(res)) as ProfilePayload;
+}
+
+export async function logSwipe(args: {
+  session_id: string;
+  deck_id: string;
+  movie_id: string;
+  action: SwipeAction;
+  ts_ms: number;
+  dwell_ms?: number;
+}) {
+  const idempotency = `${args.session_id}:${args.deck_id}:${args.movie_id}:${args.action}:${args.ts_ms}`;
+
+  const res = await fetch(API_BASE + "/v1/events/swipe", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-idempotency-key": idempotency,
+    },
+    body: JSON.stringify(args),
+  });
+
+  await mustJson(res);
+}
+</file>
+
+<file path="apps/web/.gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# OpenNext
+/.open-next
+
+# wrangler files
+.wrangler
+.dev.vars*
+
+
+!.dev.vars.example
+</file>
+
+<file path="apps/web/eslint.config.mjs">
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+	baseDirectory: __dirname,
+});
+
+const eslintConfig = [...compat.extends("next/core-web-vitals", "next/typescript")];
+
+export default eslintConfig;
+</file>
+
+<file path="apps/web/next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+	/* config options here */
+};
+
+export default nextConfig;
+
+// Enable calling `getCloudflareContext()` in `next dev`.
+// See https://opennext.js.org/cloudflare/bindings#local-access-to-bindings.
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+initOpenNextCloudflareForDev();
+</file>
+
+<file path="apps/web/open-next.config.ts">
+import { defineCloudflareConfig } from "@opennextjs/cloudflare";
+
+export default defineCloudflareConfig({
+	// Uncomment to enable R2 cache,
+	// It should be imported as:
+	// `import r2IncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/r2-incremental-cache";`
+	// See https://opennext.js.org/cloudflare/caching for more details
+	// incrementalCache: r2IncrementalCache,
+});
+</file>
+
+<file path="apps/web/package.json">
+{
+	"name": "web",
+	"version": "0.1.0",
+	"private": true,
+	"packageManager": "pnpm@10.26.2",
+	"scripts": {
+		"dev": "next dev",
+		"build": "next build",
+		"lint": "next lint",
+		"deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+		"preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+		"cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "echo \"(add E2E later)\""
+	},
+	"dependencies": {
+		"@opennextjs/cloudflare": "^1.14.4",
+		"next": "15.5.9",
+		"react": "19.1.4",
+		"react-dom": "19.1.4"
+	},
+	"devDependencies": {
+		"@eslint/eslintrc": "^3",
+		"@tailwindcss/postcss": "^4",
+		"@types/node": "20.19.27",
+		"@types/react": "^19",
+		"@types/react-dom": "^19",
+		"eslint": "^9",
+		"eslint-config-next": "15.4.6",
+		"tailwindcss": "^4",
+		"typescript": "^5",
+		"wrangler": "4.54.0"
+	}
+}
+</file>
+
+<file path="apps/web/postcss.config.mjs">
+const config = {
+	plugins: ["@tailwindcss/postcss"],
+};
+
+export default config;
+</file>
+
+<file path="apps/web/README.md">
+# OpenNext Starter
+
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+Read the documentation at https://opennext.js.org/cloudflare.
+
+## Develop
+
+Run the Next.js development server:
+
+```bash
+npm run dev
+# or similar package manager command
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+## Preview
+
+Preview the application locally on the Cloudflare runtime:
+
+```bash
+npm run preview
+# or similar package manager command
+```
+
+## Deploy
+
+Deploy the application to Cloudflare:
+
+```bash
+npm run deploy
+# or similar package manager command
+```
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+</file>
+
+<file path="apps/web/tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "types": ["./cloudflare-env.d.ts", "node"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", "next-env.d.ts", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}
+</file>
+
+<file path="apps/web/wrangler.jsonc">
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "reelswipe-web",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2025-12-29",
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".open-next/assets"
+	},
+	"images": {
+		// Enable image optimization
+		// see https://opennext.js.org/cloudflare/howtos/image
+		"binding": "IMAGES"
+	},
+	"services": [
+		{
+			"binding": "NEXT_CACHE_REVALIDATION_WORKER",
+			"service": "reelswipe-web"
+		}
+	],
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"NEXT_PUBLIC_API_BASE": "http://localhost:8787"
+	},
+	"env": {
+		"prod": {
+			"name": "reelswipe-web-prod",
+			"vars": {
+				"NEXT_PUBLIC_API_BASE": "https://<YOUR_API_PROD_DOMAIN>"
+			}
+		}
+	}
+	/**
+	 * Smart Placement
+	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+	 */
+	// "placement": {  "mode": "smart" }
+	/**
+	 * Bindings
+	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
+	 * databases, object storage, AI inference, real-time communication and more.
+	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
+	 */
+	/**
+	 * Environment Variables
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+	 * Note: Use secrets to store sensitive data.
+	 * https://developers.cloudflare.com/workers/configuration/secrets/
+	 */
+	// "vars": {  "MY_VARIABLE": "production_value" }
+}
+</file>
+
+<file path="docs/adr/0000-template.md">
+# ADR-0000: <title>
+
+- Status: Proposed | Accepted | Superseded | Deprecated
+- Date: 2025-12-29
+
+## Context
+What problem are we solving? What constraints matter?
+
+## Decision
+What did we choose?
+
+## Consequences
+What gets better/worse? What do we need to watch for?
+
+## Alternatives considered
+- Option A:
+- Option B:
+</file>
+
+<file path="docs/adr/0001-cloudflare-opennext-d1.md">
+# ADR-0001: Cloudflare-first stack (Workers + OpenNext + D1)
+
+- Status: Accepted
+- Date: 2025-12-29
+
+## Context
+Need a $0/month demo that’s globally fast and easy to deploy.
+
+## Decision
+Use Next.js on Cloudflare Workers via @opennextjs/cloudflare, Workers for API, and D1 for persistence.
+
+## Consequences
+Pros: single-vendor deploy, fast demo, simple ops.
+Cons: Worker size limits; Node compatibility constraints; some Next features require care.
+</file>
+
+<file path="docs/runbook.md">
+# ReelSwipe Runbook
+
+## Architecture (quick)
+
+- Web: Next.js + OpenNext on Cloudflare Pages
+- API: Cloudflare Workers (TypeScript)
+- DB: D1 (SQLite)
+- Data: TMDb sync
+
+Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set `API_ADMIN_TOKEN`, matching the API's `ADMIN_TOKEN` secret.
+
+## “Is it up?”
+
+### Local
+
+- Web: http://localhost:3000
+- API: http://localhost:8787/health
+
+Commands:
+
+```bash
+pnpm dev
+# or split into two shells
+pnpm --dir apps/api wrangler dev
+pnpm --dir apps/web dev
+```
+
+## Logs
+
+### Tail API logs (Cloudflare)
+
+```bash
+pnpm --dir apps/api wrangler tail
+```
+
+What to look for:
+
+- one JSON log line per request
+- fields: `req_id`, `route`, `status`, `dur_ms`
+- errors still include `req_id` and `error` details
+
+## Metrics
+
+### View /metrics
+
+- Web: https://localhost:3000/metrics (or your Pages preview)
+
+### Verify data is being written (local D1)
+
+```bash
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM swipe_events;"
+
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM recommendation_impressions;"
+
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM request_logs;"
+```
+
+### Spot-check recent request logs
+
+```bash
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT route, status, dur_ms, ts_ms FROM request_logs ORDER BY ts_ms DESC LIMIT 10;"
+```
+
+## Common failures
+
+### 401 admin required on /metrics
+
+- Ensure `API_ADMIN_TOKEN` is set for the web app (e.g., `apps/web/.env.local` or Cloudflare Pages env)
+- Confirm API has `ADMIN_TOKEN` secret and the header `x-admin-token` is sent
+
+### Metrics still showing zeros
+
+- Generate impressions/swipes in the last 24h (open the UI or seed events)
+- Try a wider window: `/v1/metrics?window=72h`
+- Query the DB directly (commands above)
+
+### D1 migration errors
+
+```bash
+pnpm --dir apps/api wrangler d1 migrations list DB --local
+pnpm --dir apps/api wrangler d1 migrations apply DB --local
+```
+
+### TMDb sync errors
+
+- Ensure `TMDB_API_KEY` (or your chosen TMDb secret) is configured
+- Review Worker logs for non-2xx responses
+
+## Runbook sanity checklist
+
+1. Confirm migrations applied locally (`wrangler d1 migrations apply DB --local`)
+2. Start the API (`pnpm --dir apps/api wrangler dev --port 8787`)
+3. Start the web (`NEXT_PUBLIC_API_BASE=http://localhost:8787 API_ADMIN_TOKEN=replace_me pnpm --dir apps/web dev --port 3000`)
+4. Hit `http://localhost:8787/health` and `http://localhost:3000/metrics`
+5. Tail logs (`pnpm --dir apps/api wrangler tail`) and watch for `req_id` + `dur_ms`
+
+## Production release checklist
+
+1. Push migrations to the prod D1 (`pnpm --dir apps/api wrangler d1 migrations apply reelswipe_prod --remote`) and verify tables exist; make sure `ADMIN_TOKEN` and (optionally) `TMDB_API_KEY` secrets are configured for the prod env.
+2. Trigger `.github/workflows/deploy.yml` via `workflow_dispatch` (choose `prod`) so both Workers deploy with the `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `PROD_API_BASE` secrets; alternatively run `pnpm --dir apps/api wrangler deploy --env prod` followed by `pnpm --dir apps/web build` + `pnpm --dir apps/web deploy --env prod` while keeping `CORS_ORIGIN`/`NEXT_PUBLIC_API_BASE` aligned with the public domains.
+3. For cautious rollouts, use `pnpm --dir apps/api wrangler versions upload --env prod` and `wrangler versions deploy --env prod --percentage <n>` to shift traffic up gradually while watching logs.
+4. After deployments finish, run `./scripts/smoke-prod.sh https://<YOUR_API_PROD_DOMAIN>` to exercise `/health` and `/v1/movies`.
+5. Load the prod web URL, swipe through a few cards, and visit `/metrics` (with the admin token) to confirm the UI renders and metrics respond.
+
+## Post-release verification
+
+- Tail the API worker logs (`pnpm --dir apps/api wrangler tail --env prod`) and look for `[scheduled]` messages so you know the cron sync and log pruning completed without errors.
+- Check that the smoke script or manual curls still succeed, and watch `/metrics` to ensure request throughput/latency are reasonable given the sampled logs.
+- Confirm the web app stays responsive, cards continue to load, and swipes are recorded (you can also inspect D1 tables or `/metrics` to double-check).
+- Watch the prod `LOG_SAMPLE_RATE` and `REQUEST_LOG_RETENTION_DAYS` values so logging stays at the conservative levels configured in the env.
+- Keep the `scripts/smoke-prod.sh` invocation handy for quick re-runs after any rollback or follow-up deploy.
+
+## Rollback notes
+
+- Use Cloudflare Versions to route traffic back to the previous release (both `reelswipe-api-prod` and `reelswipe-web-prod`) or redeploy a known-good git tag.
+- If request logging is blocking the worker, set `LOG_SAMPLE_RATE=0` (or temporarily skip the log insert) in prod env vars, redeploy, and rerun `./scripts/smoke-prod.sh` to ensure the surface is still healthy.
+- Restore data via `wrangler d1 time-travel restore reelswipe_prod --timestamp=...` if a migration/data change corrupted prod; rerun the smoke script afterward.
+</file>
+
+<file path="e2e/metrics.spec.ts">
+import { test, expect } from "@playwright/test";
+
+test("metrics page loads", async ({ page }) => {
+  await page.goto("/metrics");
+  await expect(page.getByRole("heading", { name: /metrics/i })).toBeVisible();
+});
+
+test("metrics page shows helpful message when token missing", async ({ page }) => {
+  await page.goto("/metrics");
+  await expect(page.getByText(/Missing/i)).toBeVisible();
+});
+</file>
+
+<file path="scripts/smoke-prod.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+API_BASE="${1:?Usage: ./scripts/smoke-prod.sh https://api.example.com}"
+
+printf '[smoke] health\n'
+curl -fsS "$API_BASE/health" >/dev/null
+
+printf '[smoke] movies\n'
+curl -fsS "$API_BASE/v1/movies?limit=3" | head
+
+printf '[smoke] ok\n'
+</file>
+
+<file path="tools/ci/api-smoke.mjs">
+import { spawn } from "node:child_process";
+
+const API = "http://localhost:8787";
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitFor(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {}
+    await sleep(500);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function main() {
+  const child = spawn("pnpm", ["--dir", "apps/api", "exec", "wrangler", "dev", "--port", "8787"], {
+    stdio: "inherit",
+    env: { ...process.env },
+  });
+
+  try {
+    await waitFor(`${API}/health`);
+    const res = await fetch(`${API}/health`);
+    if (!res.ok) throw new Error("/health failed");
+
+    console.log("API smoke OK");
+  } finally {
+    child.kill("SIGTERM");
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+</file>
+
+<file path="tools/eval/eval.mjs">
+import fs from "node:fs";
+import path from "node:path";
+
+function writeFile(p, s) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, s);
+}
+
+function readWranglerJson(p) {
+  if (!fs.existsSync(p)) return [];
+  const raw = fs.readFileSync(p, "utf8");
+  const obj = JSON.parse(raw);
+  if (Array.isArray(obj)) return obj;
+  if (obj?.result?.[0]?.results) return obj.result[0].results;
+  if (obj?.results) return obj.results;
+  return [];
+}
+
+function dcg(labels) {
+  let s = 0;
+  for (let i = 0; i < labels.length; i++) {
+    const rel = labels[i];
+    const denom = Math.log2(i + 2);
+    s += (Math.pow(2, rel) - 1) / denom;
+  }
+  return s;
+}
+
+function ndcgAtK(labels, k) {
+  const top = labels.slice(0, k);
+  const ideal = [...labels].sort((a, b) => b - a).slice(0, k);
+  const idcg = dcg(ideal);
+  if (idcg <= 0) return 0;
+  return dcg(top) / idcg;
+}
+
+function averagePrecisionAtK(labels, k) {
+  let hits = 0;
+  let sumPrec = 0;
+  const top = labels.slice(0, k);
+  for (let i = 0; i < top.length; i++) {
+    if (top[i] > 0) {
+      hits += 1;
+      sumPrec += hits / (i + 1);
+    }
+  }
+  const denom = Math.max(1, labels.filter((x) => x > 0).length);
+  return sumPrec / denom;
+}
+
+function groupBy(rows, keyFn) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    const arr = m.get(k) ?? [];
+    arr.push(r);
+    m.set(k, arr);
+  }
+  return m;
+}
+
+function mean(xs) {
+  if (xs.length === 0) return 0;
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+
+function computeReport(rows, k = 10) {
+  const decks = groupBy(rows, (r) => `${r.model_version ?? "unknown"}::${r.deck_id}`);
+
+  const perDeck = [];
+  const seenMovies = new Set();
+
+  for (const [deckKey, items] of decks.entries()) {
+    items.sort((a, b) => a.rank - b.rank);
+    const labels = items.map((x) => Number(x.label ?? 0));
+
+    perDeck.push({
+      deckKey,
+      modelVersion: items[0]?.model_version ?? "unknown",
+      ndcg: ndcgAtK(labels, k),
+      map: averagePrecisionAtK(labels, k),
+      impressions: items.length,
+      positives: labels.filter((x) => x > 0).length,
+    });
+
+    for (const it of items) seenMovies.add(it.movie_id);
+  }
+
+  const byModel = groupBy(perDeck, (d) => d.modelVersion);
+
+  const models = [];
+  for (const [mv, ds] of byModel.entries()) {
+    const ndcgs = ds.map((d) => d.ndcg);
+    const maps = ds.map((d) => d.map);
+    const imps = ds.reduce((s, d) => s + d.impressions, 0);
+    models.push({
+      model_version: mv,
+      decks: ds.length,
+      impressions: imps,
+      ndcg_at_10: mean(ndcgs),
+      map_at_10: mean(maps),
+    });
+  }
+
+  const coverage = {
+    unique_movies: seenMovies.size,
+    total_impressions: rows.length,
+    unique_movie_rate: rows.length ? seenMovies.size / rows.length : 0,
+  };
+
+  models.sort((a, b) => b.ndcg_at_10 - a.ndcg_at_10);
+
+  return { k, models, coverage, perDeckSample: perDeck.slice(0, 10) };
+}
+
+function renderMarkdown(report) {
+  const lines = [];
+  lines.push(`# ReelSwipe Offline Evaluation`);
+  lines.push(`Interpret these as sanity metrics. Use them to compare model versions, not to claim truth.`);
+  lines.push("");
+
+  lines.push(`## Summary (k=${report.k})`);
+  lines.push("");
+  lines.push(`| model_version | decks | impressions | NDCG@10 | MAP@10 |`);
+  lines.push(`|---|---:|---:|---:|---:|`);
+  for (const m of report.models) {
+    lines.push(`| ${m.model_version} | ${m.decks} | ${m.impressions} | ${m.ndcg_at_10.toFixed(4)} | ${m.map_at_10.toFixed(4)} |`);
+  }
+  lines.push("");
+
+  lines.push(`## Coverage`);
+  lines.push("");
+  lines.push(`- unique movies: ${report.coverage.unique_movies}`);
+  lines.push(`- total impressions: ${report.coverage.total_impressions}`);
+  lines.push(`- unique-movie rate: ${report.coverage.unique_movie_rate.toFixed(4)}`);
+  lines.push("");
+
+  lines.push(`## Per-deck sample (first 10)`);
+  lines.push("");
+  lines.push(`| deckKey | model | impressions | positives | NDCG@10 | MAP@10 |`);
+  lines.push(`|---|---|---:|---:|---:|---:|`);
+  for (const d of report.perDeckSample) {
+    lines.push(`| ${d.deckKey} | ${d.modelVersion} | ${d.impressions} | ${d.positives} | ${d.ndcg.toFixed(4)} | ${d.map.toFixed(4)} |`);
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+// -------- main --------
+const args = process.argv.slice(2);
+const input = args.includes("--input") ? args[args.indexOf("--input") + 1] : null;
+const outMd = args.includes("--out-md") ? args[args.indexOf("--out-md") + 1] : "artifacts/eval/report.md";
+const outJson = args.includes("--out-json") ? args[args.indexOf("--out-json") + 1] : "artifacts/eval/report.json";
+
+let rows;
+if (input) {
+  rows = readWranglerJson(input);
+} else {
+  rows = [
+    { deck_id: "d1", rank: 1, label: 1, movie_id: "m1", model_version: "two_stage_v2" },
+    { deck_id: "d1", rank: 2, label: 0, movie_id: "m2", model_version: "two_stage_v2" },
+    { deck_id: "d1", rank: 3, label: 1, movie_id: "m3", model_version: "two_stage_v2" },
+    { deck_id: "d2", rank: 1, label: 0, movie_id: "m4", model_version: "two_stage_v2" },
+    { deck_id: "d2", rank: 2, label: 1, movie_id: "m5", model_version: "two_stage_v2" },
+    { deck_id: "d2", rank: 3, label: 0, movie_id: "m6", model_version: "two_stage_v2" },
+
+    { deck_id: "d3", rank: 1, label: 0, movie_id: "m1", model_version: "baseline_v1" },
+    { deck_id: "d3", rank: 2, label: 1, movie_id: "m3", model_version: "baseline_v1" },
+    { deck_id: "d3", rank: 3, label: 0, movie_id: "m2", model_version: "baseline_v1" },
+  ];
+}
+
+const report = computeReport(rows, 10);
+writeFile(outJson, JSON.stringify(report, null, 2));
+writeFile(outMd, renderMarkdown(report));
+
+console.log(`wrote ${outMd}`);
+console.log(`wrote ${outJson}`);
+</file>
+
+<file path="tools/metrics/summary.mjs">
+import fs from "node:fs";
+
+function readWranglerJson(path) {
+  if (!fs.existsSync(path)) {
+    console.warn(`${path} not found, skipping`);
+    return [];
+  }
+  const raw = fs.readFileSync(path, "utf8");
+  const obj = JSON.parse(raw);
+  if (Array.isArray(obj)) return obj;
+  if (obj?.result?.[0]?.results) return obj.result[0].results;
+  if (obj?.results) return obj.results;
+  return [];
+}
+
+const swipes = readWranglerJson("data/swipe_events.json");
+const imps = readWranglerJson("data/impressions.json");
+
+const totalImps = imps.length;
+const totalSwipes = swipes.length;
+
+const likes = swipes.filter((s) => s.action === "like").length;
+const skips = swipes.filter((s) => s.action === "skip").length;
+
+const likeRate = totalSwipes ? likes / totalSwipes : 0;
+
+const dwell = swipes
+  .map((s) => Number(s.dwell_ms))
+  .filter((n) => Number.isFinite(n) && n >= 0);
+
+const meanDwell = dwell.length ? dwell.reduce((a, b) => a + b, 0) / dwell.length : 0;
+
+const likedByMovie = new Map();
+for (const s of swipes) {
+  if (s.action !== "like") continue;
+  likedByMovie.set(s.movie_id, (likedByMovie.get(s.movie_id) ?? 0) + 1);
+}
+
+const topLiked = Array.from(likedByMovie.entries())
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 10);
+
+console.log("impressions:", totalImps);
+console.log("swipes:", totalSwipes);
+console.log("likes:", likes);
+console.log("skips:", skips);
+console.log("like rate:", likeRate.toFixed(3));
+console.log("mean dwell ms:", meanDwell.toFixed(0));
+console.log("top liked:");
+for (const [movieId, n] of topLiked) console.log(`  ${movieId}: ${n}`);
+</file>
+
+<file path="tools/ml/eval_offline.mjs">
+import fs from "node:fs";
+import path from "node:path";
+
+function mkdirp(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function readJson(p) {
+  return JSON.parse(fs.readFileSync(p, "utf8"));
+}
+
+function writeFile(p, s) {
+  mkdirp(path.dirname(p));
+  fs.writeFileSync(p, s);
+}
+
+function writeJson(p, v) {
+  writeFile(p, JSON.stringify(v, null, 2));
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[k] = v;
+  }
+  return out;
+}
+
+function dcg(rels) {
+  let s = 0;
+  for (let i = 0; i < rels.length; i++) {
+    const rel = rels[i];
+    const denom = Math.log2(i + 2);
+    s += rel / denom;
+  }
+  return s;
+}
+
+function ndcgAtK(rankedIds, truthSet, k) {
+  const rels = rankedIds.slice(0, k).map((id) => (truthSet.has(id) ? 1 : 0));
+  const ideal = Array.from({ length: Math.min(k, truthSet.size) }, () => 1);
+  const denom = dcg(ideal);
+  if (denom <= 0) return 0;
+  return dcg(rels) / denom;
+}
+
+function apAtK(rankedIds, truthSet, k) {
+  let hits = 0;
+  let sumPrec = 0;
+  const top = rankedIds.slice(0, k);
+  for (let i = 0; i < top.length; i++) {
+    if (truthSet.has(top[i])) {
+      hits += 1;
+      sumPrec += hits / (i + 1);
+    }
+  }
+  const denom = Math.min(truthSet.size, k);
+  return denom ? sumPrec / denom : 0;
+}
+
+const args = parseArgs(process.argv);
+const snapshotDir = String(args.snapshot || "");
+const modelDir = String(args.model || "");
+const outDir = String(args.out || modelDir || "");
+
+if (!snapshotDir) throw new Error("--snapshot is required");
+if (!modelDir) throw new Error("--model is required");
+if (!outDir) throw new Error("--out is required");
+
+const swipes = readJson(path.join(snapshotDir, "swipe_events.json"));
+const model = readJson(path.join(modelDir, "model.json"));
+const neighbors = readJson(path.join(modelDir, "neighbors.json"));
+
+// Build neighbor map
+const neighMap = new Map();
+for (const r of neighbors) {
+  const a = String(r.movie_id);
+  const arr = neighMap.get(a) ?? [];
+  arr.push({ id: String(r.neighbor_movie_id), score: Number(r.score) });
+  neighMap.set(a, arr);
+}
+
+// Build ordered likes per session
+const likesBySession = new Map();
+for (const s of swipes) {
+  if (s.action !== "like") continue;
+  const sid = String(s.session_id);
+  const arr = likesBySession.get(sid) ?? [];
+  arr.push({ movie_id: String(s.movie_id), ts_ms: Number(s.ts_ms ?? 0) });
+  likesBySession.set(sid, arr);
+}
+
+for (const [sid, arr] of likesBySession.entries()) {
+  arr.sort((a, b) => a.ts_ms - b.ts_ms);
+  const seen = new Set();
+  const dedup = [];
+  for (const x of arr) {
+    if (seen.has(x.movie_id)) continue;
+    seen.add(x.movie_id);
+    dedup.push(x);
+  }
+  likesBySession.set(sid, dedup);
+}
+
+// Offline split + eval
+const K = 10;
+let nSessions = 0;
+let sumNdcg = 0;
+let sumMap = 0;
+let sumRecall = 0;
+
+for (const arr of likesBySession.values()) {
+  if (arr.length < 3) continue;
+
+  const cut = Math.max(1, Math.floor(arr.length * 0.6));
+  const history = arr.slice(0, cut).map((x) => x.movie_id);
+  const holdout = arr.slice(cut).map((x) => x.movie_id);
+  if (!holdout.length) continue;
+
+  // Score candidates by summing neighbor scores from history
+  const scores = new Map();
+  for (const h of history) {
+    const ns = neighMap.get(h) ?? [];
+    for (const n of ns) {
+      if (history.includes(n.id)) continue;
+      scores.set(n.id, (scores.get(n.id) ?? 0) + n.score);
+    }
+  }
+
+  const ranked = Array.from(scores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 200)
+    .map((x) => x[0]);
+
+  const truth = new Set(holdout);
+
+  const ndcg = ndcgAtK(ranked, truth, K);
+  const map = apAtK(ranked, truth, K);
+
+  let hits = 0;
+  for (const id of ranked.slice(0, K)) if (truth.has(id)) hits++;
+  const recall = truth.size ? hits / truth.size : 0;
+
+  nSessions++;
+  sumNdcg += ndcg;
+  sumMap += map;
+  sumRecall += recall;
+}
+
+const metrics = {
+  model_version: model.model_version,
+  snapshot_id: model.snapshot_id,
+  evaluated_at_ms: Date.now(),
+  eval: {
+    k: K,
+    sessions: nSessions,
+    ndcg_at_10: nSessions ? sumNdcg / nSessions : 0,
+    map_at_10: nSessions ? sumMap / nSessions : 0,
+    recall_at_10: nSessions ? sumRecall / nSessions : 0,
+  },
+};
+
+// Tiny ASCII bar chart
+function bar(x) {
+  const n = Math.max(0, Math.min(20, Math.round(x * 20)));
+  return "█".repeat(n) + "░".repeat(20 - n);
+}
+
+const report =
+  `# Phase 6 Offline Evaluation Report\n\n` +
+  `**Model:** ${metrics.model_version}  \n` +
+  `**Snapshot:** ${metrics.snapshot_id}  \n` +
+  `**Sessions evaluated:** ${metrics.eval.sessions}  \n\n` +
+  `## Metrics (k=${metrics.eval.k})\n\n` +
+  `| Metric | Value | Plot |\n` +
+  `|---|---:|---|\n` +
+  `| NDCG@10 | ${metrics.eval.ndcg_at_10.toFixed(4)} | ${bar(metrics.eval.ndcg_at_10)} |\n` +
+  `| MAP@10 | ${metrics.eval.map_at_10.toFixed(4)} | ${bar(metrics.eval.map_at_10)} |\n` +
+  `| Recall@10 | ${metrics.eval.recall_at_10.toFixed(4)} | ${bar(metrics.eval.recall_at_10)} |\n\n` +
+  `## Notes\n` +
+  `- This is an offline split inside each demo session.\n` +
+  `- Scores are based on summed neighbor similarities from historical likes.\n` +
+  `- If metrics are unstable, collect more sessions with 5+ likes each.\n`;
+
+mkdirp(outDir);
+writeJson(path.join(outDir, "metrics.json"), metrics);
+writeFile(path.join(outDir, "report.md"), report);
+
+console.log(JSON.stringify({ ok: true, out_dir: outDir, metrics }, null, 2));
+</file>
+
+<file path="tools/ml/make_load_sql.mjs">
+import fs from "node:fs";
+import path from "node:path";
+
+function readJson(p) {
+  return JSON.parse(fs.readFileSync(p, "utf8"));
+}
+
+function mkdirp(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function esc(s) {
+  return String(s).replaceAll("'", "''");
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[k] = v;
+  }
+  return out;
+}
+
+const args = parseArgs(process.argv);
+const modelDir = String(args.model || "");
+const outFile = String(args.out || "");
+const setCurrent = Boolean(args["set-current"]);
+
+if (!modelDir) throw new Error("--model is required");
+if (!outFile) throw new Error("--out is required");
+
+const model = readJson(path.join(modelDir, "model.json"));
+const neighbors = readJson(path.join(modelDir, "neighbors.json"));
+const metrics = fs.existsSync(path.join(modelDir, "metrics.json"))
+  ? readJson(path.join(modelDir, "metrics.json"))
+  : null;
+
+const mv = model.model_version;
+const snapshotId = model.snapshot_id;
+const algo = model.algo;
+const paramsJson = JSON.stringify(model.params ?? {});
+const metricsJson = metrics ? JSON.stringify(metrics.eval ?? metrics) : null;
+
+let sql = "BEGIN;\n";
+
+// Upsert model registry
+sql += `INSERT OR REPLACE INTO model_versions(model_version, created_at_ms, snapshot_id, algo, params_json, metrics_json, notes) VALUES (`;
+sql += `'${esc(mv)}', ${Number(model.created_at_ms ?? Date.now())}, '${esc(snapshotId)}', '${esc(algo)}', '${esc(paramsJson)}', `;
+sql += metricsJson == null ? "NULL" : `'${esc(metricsJson)}'`;
+sql += `, 'loaded_by_tools_ml_make_load_sql');\n`;
+
+// Replace neighbor rows for this model version
+sql += `DELETE FROM cf_item_neighbors WHERE model_version='${esc(mv)}';\n`;
+
+// Insert neighbors
+for (const r of neighbors) {
+  const a = esc(r.movie_id);
+  const b = esc(r.neighbor_movie_id);
+  const score = Number(r.score);
+  if (!Number.isFinite(score)) continue;
+  sql += `INSERT INTO cf_item_neighbors(model_version, movie_id, neighbor_movie_id, score) VALUES ('${esc(mv)}','${a}','${b}',${score});\n`;
+}
+
+if (setCurrent) {
+  sql += `INSERT OR REPLACE INTO app_meta(key,value) VALUES ('current_model_version','${esc(mv)}');\n`;
+}
+
+sql += "COMMIT;\n";
+
+mkdirp(path.dirname(outFile));
+fs.writeFileSync(outFile, sql);
+console.log(JSON.stringify({ ok: true, out_file: outFile, rows: neighbors.length, set_current: setCurrent }, null, 2));
+</file>
+
+<file path="tools/ml/snapshot.mjs">
+import fs from "node:fs";
+import path from "node:path";
+
+function mkdirp(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function readWranglerJson(p) {
+  if (!fs.existsSync(p)) return [];
+  const raw = fs.readFileSync(p, "utf8");
+  const obj = JSON.parse(raw);
+  if (Array.isArray(obj)) return obj;
+  if (obj?.result?.[0]?.results) return obj.result[0].results;
+  if (obj?.results) return obj.results;
+  return [];
+}
+
+function writeJson(p, v) {
+  mkdirp(path.dirname(p));
+  fs.writeFileSync(p, JSON.stringify(v, null, 2));
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[k] = v;
+  }
+  return out;
+}
+
+const args = parseArgs(process.argv);
+const snapshotId = String(args.snapshot || "").trim();
+const rawDir = String(args.raw || "artifacts/ml/raw");
+const outRoot = String(args.out || "artifacts/ml/snapshots");
+
+if (!snapshotId) {
+  console.error("--snapshot is required (example: 2025-12-30)");
+  process.exit(1);
+}
+
+const swipes = readWranglerJson(path.join(rawDir, "swipe_events.json"));
+const movies = readWranglerJson(path.join(rawDir, "movies.json"));
+const movieGenres = readWranglerJson(path.join(rawDir, "movie_genres.json"));
+const tmdbGenres = readWranglerJson(path.join(rawDir, "tmdb_genres.json"));
+
+const outDir = path.join(outRoot, snapshotId);
+mkdirp(outDir);
+
+writeJson(path.join(outDir, "swipe_events.json"), swipes);
+writeJson(path.join(outDir, "movies.json"), movies);
+writeJson(path.join(outDir, "movie_genres.json"), movieGenres);
+writeJson(path.join(outDir, "tmdb_genres.json"), tmdbGenres);
+
+const manifest = {
+  snapshot_id: snapshotId,
+  created_at: new Date().toISOString(),
+  counts: {
+    swipe_events: swipes.length,
+    movies: movies.length,
+    movie_genres: movieGenres.length,
+    tmdb_genres: tmdbGenres.length,
+  },
+  files: ["swipe_events.json", "movies.json", "movie_genres.json", "tmdb_genres.json"],
+};
+
+writeJson(path.join(outDir, "manifest.json"), manifest);
+console.log(JSON.stringify({ ok: true, out_dir: outDir, manifest }, null, 2));
+</file>
+
+<file path="tools/ml/train_itemitem_cf.mjs">
+import fs from "node:fs";
+import path from "node:path";
+
+function mkdirp(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function readJson(p) {
+  return JSON.parse(fs.readFileSync(p, "utf8"));
+}
+
+function writeJson(p, v) {
+  mkdirp(path.dirname(p));
+  fs.writeFileSync(p, JSON.stringify(v, null, 2));
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[k] = v;
+  }
+  return out;
+}
+
+const args = parseArgs(process.argv);
+const snapshotDir = String(args.snapshot || "");
+const outDir = String(args.out || "");
+const modelVersion = String(args["model-version"] || "");
+const k = Number(args.k ?? 30);
+const minCo = Number(args["min-co"] ?? 2);
+
+if (!snapshotDir) throw new Error("--snapshot is required");
+if (!outDir) throw new Error("--out is required");
+if (!modelVersion) throw new Error("--model-version is required");
+
+const swipes = readJson(path.join(snapshotDir, "swipe_events.json"));
+const manifest = readJson(path.join(snapshotDir, "manifest.json"));
+
+// Build: session -> ordered likes
+const likesBySession = new Map();
+for (const s of swipes) {
+  if (s.action !== "like") continue;
+  const sid = String(s.session_id);
+  const arr = likesBySession.get(sid) ?? [];
+  arr.push({ movie_id: String(s.movie_id), ts_ms: Number(s.ts_ms ?? 0) });
+  likesBySession.set(sid, arr);
+}
+for (const [sid, arr] of likesBySession.entries()) {
+  arr.sort((a, b) => a.ts_ms - b.ts_ms);
+  // de-dupe within session
+  const seen = new Set();
+  const dedup = [];
+  for (const x of arr) {
+    if (seen.has(x.movie_id)) continue;
+    seen.add(x.movie_id);
+    dedup.push(x);
+  }
+  likesBySession.set(sid, dedup);
+}
+
+// Count: movie -> #sessions liked
+const sessionsPerMovie = new Map();
+for (const arr of likesBySession.values()) {
+  for (const x of arr) sessionsPerMovie.set(x.movie_id, (sessionsPerMovie.get(x.movie_id) ?? 0) + 1);
+}
+
+// Co-occurrence counts: movie -> (neighbor -> coCount)
+const co = new Map();
+function inc(a, b) {
+  let m = co.get(a);
+  if (!m) {
+    m = new Map();
+    co.set(a, m);
+  }
+  m.set(b, (m.get(b) ?? 0) + 1);
+}
+
+for (const arr of likesBySession.values()) {
+  const ids = arr.map((x) => x.movie_id);
+  // guard: avoid O(n^2) blowups
+  const capped = ids.slice(0, 30);
+  for (let i = 0; i < capped.length; i++) {
+    for (let j = i + 1; j < capped.length; j++) {
+      const a = capped[i];
+      const b = capped[j];
+      inc(a, b);
+      inc(b, a);
+    }
+  }
+}
+
+// Similarity: cosine with shrinkage
+const shrink = 10; // reduces noise from tiny co-counts
+
+const neighbors = [];
+for (const [a, m] of co.entries()) {
+  const ca = sessionsPerMovie.get(a) ?? 1;
+  const scored = [];
+  for (const [b, coCount] of m.entries()) {
+    if (coCount < minCo) continue;
+    const cb = sessionsPerMovie.get(b) ?? 1;
+    const cosine = coCount / Math.sqrt(ca * cb);
+    const s = cosine * (coCount / (coCount + shrink));
+    scored.push({ neighbor_movie_id: b, score: s, co: coCount });
+  }
+  scored.sort((x, y) => y.score - x.score);
+  for (const x of scored.slice(0, k)) {
+    neighbors.push({ movie_id: a, neighbor_movie_id: x.neighbor_movie_id, score: x.score });
+  }
+}
+
+mkdirp(outDir);
+
+const model = {
+  model_version: modelVersion,
+  snapshot_id: manifest.snapshot_id,
+  algo: "item_item_cf_cosine_shrink",
+  created_at_ms: Date.now(),
+  params: { k, minCo, shrink, sessionLikeCap: 30 },
+  stats: {
+    sessions_with_likes: likesBySession.size,
+    movies_with_neighbors: new Set(neighbors.map((r) => r.movie_id)).size,
+    neighbor_rows: neighbors.length,
+  },
+};
+
+writeJson(path.join(outDir, "model.json"), model);
+writeJson(path.join(outDir, "neighbors.json"), neighbors);
+
+console.log(JSON.stringify({ ok: true, out_dir: outDir, model }, null, 2));
+</file>
+
+<file path=".gitignore">
+# node dependencies
+/node_modules
+/apps/*/node_modules
+/packages/*/node_modules
+
+# build products
+/.turbo
+/.next
+/.open-next
+/apps/web/.next
+/apps/web/.open-next
+/apps/api/.open-next
+
+# tooling
+.turbo
+.wrangler
+/.wrangler
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# system
+.DS_Store
+
+# environment
+.env*
+.dev.vars*
+data/
+
+# artifacts (raw exports are local-only)
+artifacts/ml/raw/**
+</file>
+
+<file path=".prettierignore">
+node_modules
+.next
+.turbo
+.dist
+.playwright
+playwright-report
+</file>
+
+<file path=".prettierrc.json">
+{
+  "semi": true,
+  "singleQuote": false,
+  "printWidth": 100
+}
+</file>
+
+<file path=".repomixignore">
+apps/web/cloudflare-env.d.ts
+*.svg
+</file>
+
+<file path="package.json">
+{
+  "name": "reelswipe",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "eval": "node tools/eval/eval.mjs",
+    "eval:from-d1": "node tools/eval/eval.mjs --input artifacts/eval/rows.json",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test:integration": "node tools/ci/api-smoke.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.0.0",
+    "wrangler": "4.54.0"
+  }
+}
+</file>
+
+<file path="playwright.config.ts">
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./e2e",
+  timeout: 30_000,
+  retries: process.env.CI ? 1 : 0,
+  use: {
+    baseURL: process.env.E2E_BASE_URL || "http://localhost:3000",
+    trace: "on-first-retry",
+  },
+  reporter: [["html", { open: "never" }], ["list"]],
+});
+</file>
+
+<file path="pnpm-workspace.yaml">
+packages:
+  - "apps/*"
+  - "packages/*"
+</file>
+
+<file path="README.md">
+# ReelSwipe
+
+Phase 0 lays a reproducible Cloudflare-first monorepo foundation where local dev with `pnpm dev` gets you running in under five minutes.
+
+## Quickstart
+
+```bash
+pnpm install
+pnpm dev
+```
+
+This boots `apps/api` (Workers) and `apps/web` (Next/OpenNext) simultaneously.
+
+## Structure
+
+- `apps/api`: Cloudflare Worker + D1 access for the HTTP API.
+- `apps/web`: Next.js 15 running via OpenNext on Workers.
+- `docs/`: Architecture decisions and reference materials.
+- `.github/`: Issue/PR templates and CI workflow.
+## Cloudflare checklist
+
+1. Run `pnpm wrangler login` if you haven't already.
+2. Create a dev D1 database: `pnpm wrangler d1 create reelswipe_dev` and copy the returned `database_id` into `apps/api/wrangler.jsonc`.
+3. Apply the initial migration locally (`pnpm --dir apps/api wrangler d1 migrations apply reelswipe_dev --local`) and on Cloudflare (`pnpm --dir apps/api wrangler d1 migrations apply reelswipe_dev`).
+4. Optionally deploy `apps/api` and `apps/web` once the database exists (`pnpm --dir apps/api deploy`, `pnpm --dir apps/web deploy`) and record the `.workers.dev` URLs for future reference.
+
+## Phase 2 data logging
+
+1. Copy `apps/api/.dev.vars.example` to `.dev.vars` and fill in `TMDB_API_KEY` plus a long `ADMIN_TOKEN`; `CORS_ORIGIN` can stay set to your web dev origin.
+2. Apply the new Phase 2 migration so D1 has the impressions, swipes, and sync tables (`cd apps/api && npx wrangler d1 migrations apply DB --local` for local dev).
+3. Sync from TMDb by POSTing to the new admin endpoint:
+
+   ```bash
+   cd apps/api
+   curl -X POST \
+     -H "Authorization: Bearer $(grep '^ADMIN_TOKEN=' .dev.vars | cut -d= -f2)" \
+     "http://localhost:8787/v1/admin/tmdb/sync?force=1"
+   ```
+
+4. Export the new tables when you want offline metrics:
+
+   ```bash
+   cd apps/api
+   mkdir -p ../../data
+   npx wrangler d1 execute DB --local --json --command "SELECT * FROM swipe_events ORDER BY ts_ms ASC" > ../../data/swipe_events.json
+   npx wrangler d1 execute DB --local --json --command "SELECT * FROM recommendation_impressions ORDER BY ts_ms ASC" > ../../data/impressions.json
+   node tools/metrics/summary.mjs
+   ```
+
+   The script prints totals and top likes so you can sanity-check engagement without a dashboard.
+</file>
+
+<file path="turbo.json">
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "lint": {
+      "outputs": []
+    },
+    "typecheck": {
+      "outputs": []
+    },
+    "test": {
+      "outputs": []
+    },
+    "build": {
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}
+</file>
+
+</files>

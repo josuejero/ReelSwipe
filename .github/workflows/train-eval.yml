@@ -1,0 +1,61 @@
+name: Train + Eval (Phase 6)
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: "Snapshot id folder name (e.g. 2025-12-30)"
+        required: true
+        default: "2025-12-30"
+      k:
+        description: "Neighbors per item"
+        required: true
+        default: "30"
+
+jobs:
+  train_eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install
+
+      - name: Train
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          K: ${{ inputs.k }}
+        run: |
+          MODEL_VERSION="cf_itemitem_${SNAPSHOT_ID}"
+          node tools/ml/train_itemitem_cf.mjs \
+            --snapshot artifacts/ml/snapshots/$SNAPSHOT_ID \
+            --out artifacts/ml/models/$MODEL_VERSION \
+            --model-version "$MODEL_VERSION" \
+            --k "$K" \
+            --min-co 2
+
+      - name: Eval
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+        run: |
+          MODEL_VERSION="cf_itemitem_${SNAPSHOT_ID}"
+          node tools/ml/eval_offline.mjs \
+            --snapshot artifacts/ml/snapshots/$SNAPSHOT_ID \
+            --model artifacts/ml/models/$MODEL_VERSION \
+            --out artifacts/ml/models/$MODEL_VERSION
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6-${{ inputs.snapshot_id }}
+          path: artifacts/ml/models/
+          retention-days: 30

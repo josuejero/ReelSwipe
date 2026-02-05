@@ -1,0 +1,25 @@
+{
+  "name": "reelswipe",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "eval": "node tools/eval/eval.mjs",
+    "eval:from-d1": "node tools/eval/eval.mjs --input artifacts/eval/rows.json",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test:integration": "node tools/ci/api-smoke.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.0.0",
+    "wrangler": "4.54.0"
+  }
+}

@@ -1,0 +1,34 @@
+# node dependencies
+/node_modules
+/apps/*/node_modules
+/packages/*/node_modules
+
+# build products
+/.turbo
+/.next
+/.open-next
+/apps/web/.next
+/apps/web/.open-next
+/apps/api/.open-next
+
+# tooling
+.turbo
+.wrangler
+/.wrangler
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# system
+.DS_Store
+
+# environment
+.env*
+.dev.vars*
+data/
+
+# artifacts (raw exports are local-only)
+artifacts/ml/raw/**
