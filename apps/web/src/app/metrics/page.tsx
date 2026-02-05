@@ -1,5 +1,3 @@
-export const runtime = "edge";
-
 type MetricsPayload = {
   window_ms: number;
   since_ms: number;
