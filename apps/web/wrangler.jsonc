@@ -42,7 +42,7 @@
       "services": [
         {
           "binding": "NEXT_CACHE_REVALIDATION_WORKER",
-          "service": "reelswipe-web",
+          "service": "reelswipe-web-prod",
         },
       ],
       "vars": {
