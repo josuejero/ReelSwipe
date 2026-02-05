@@ -107,6 +107,7 @@ docs/
   adr/
     0000-template.md
     0001-cloudflare-opennext-d1.md
+    0002-data-quality-gate.md
   runbook.md
 e2e/
   metrics.spec.ts
@@ -120,6 +121,7 @@ tools/
   metrics/
     summary.mjs
   ml/
+    data-quality.mjs
     eval_offline.mjs
     make_load_sql.mjs
     snapshot.mjs
@@ -178,104 +180,6 @@ body:
     attributes:
       label: Acceptance criteria
       description: Bullet list of what "done" means.
-</file>
-
-<file path=".github/workflows/ci.yml">
-name: CI
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-jobs:
-  checks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Format (check)
-        run: pnpm format:check
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Unit tests
-        run: pnpm test
-
-      - name: Integration smoke
-        run: pnpm test:integration
-
-      - name: Build
-        run: pnpm build
-
-      - name: Eval (deterministic sample)
-        run: node tools/eval/eval.mjs --out-md artifacts/eval/report.md --out-json artifacts/eval/report.json
-
-      - name: Upload eval artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-report
-          path: artifacts/eval/
-
-  e2e:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps
-
-      - name: Start API (background)
-        run: pnpm --dir apps/api wrangler dev --port 8787 &
-
-      - name: Start Web (background)
-        env:
-          NEXT_PUBLIC_API_BASE: http://localhost:8787
-          API_ADMIN_TOKEN: ${{ secrets.API_ADMIN_TOKEN }}
-        run: pnpm --dir apps/web dev --port 3000 &
-
-      - name: Wait for Web
-        run: |
-          node -e "const t=setInterval(async()=>{try{const r=await fetch('http://localhost:3000'); if(r.ok){clearInterval(t); process.exit(0)}}catch{}},500); setTimeout(()=>{console.error('timeout'); process.exit(1)},30000)"
-
-      - name: Run Playwright
-        env:
-          E2E_BASE_URL: http://localhost:3000
-        run: pnpm exec playwright test
-
-      - name: Upload Playwright report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 30
 </file>
 
 <file path=".github/workflows/deploy.yml">
@@ -393,25 +297,6 @@ jobs:
           name: phase6-${{ inputs.snapshot_id }}
           path: artifacts/ml/models/
           retention-days: 30
-</file>
-
-<file path=".github/PULL_REQUEST_TEMPLATE.md">
-## What changed?
-
-## Why?
-
-## How to test
-- [ ] `pnpm lint`
-- [ ] `pnpm typecheck`
-- [ ] `pnpm test`
-- [ ] Manual: (steps)
-
-## Screenshots (if UI)
-
-## Checklist
-- [ ] Docs updated (if needed)
-- [ ] No secrets committed
-- [ ] Small, reviewable PR
 </file>
 
 <file path="apps/api/migrations/0001_init.sql">
@@ -670,6 +555,1238 @@ export async function sha256Hex(input: string): Promise<string> {
 }
 </file>
 
+<file path="apps/api/src/lib/log.ts">
+export type LogLevel = "info" | "warn" | "error";
+
+type LogFields = Record<string, unknown>;
+
+export function log(level: LogLevel, fields: LogFields) {
+  const record = {
+    ts: new Date().toISOString(),
+    level,
+    ...fields,
+  };
+
+  const line = JSON.stringify(record);
+
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.log(line);
+}
+</file>
+
+<file path="apps/api/src/lib/random.ts">
+export function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function shuffleInPlace<T>(arr: T[], seed: number) {
+  const rand = mulberry32(seed);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+</file>
+
+<file path="apps/api/src/types.ts">
+export interface Env {
+  DB: D1Database;
+  CORS_ORIGIN?: string;
+
+  // TMDb sync
+  TMDB_API_KEY?: string;
+
+  // Protect admin endpoints
+  ADMIN_TOKEN?: string;
+
+  // Phase 4 configurables
+  RANKER_MODE?: "two_stage" | "baseline";
+
+  // Phase 7 configurables
+  LOG_SAMPLE_RATE?: string;
+  REQUEST_LOG_RETENTION_DAYS?: string;
+}
+</file>
+
+<file path="apps/api/package.json">
+{
+  "name": "reelswipe-api",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "deploy": "wrangler deploy",
+    "db:local:reset": "wrangler d1 migrations apply DB --local && wrangler d1 execute DB --local --command=\"PRAGMA foreign_keys=ON;\"",
+    "db:remote:apply": "wrangler d1 migrations apply DB",
+    "db:local:count": "wrangler d1 execute DB --local --command=\"SELECT COUNT(*) AS n FROM movies;\"",
+    "db:remote:count": "wrangler d1 execute DB --command=\"SELECT COUNT(*) AS n FROM movies;\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"(add lint later)\"",
+    "test": "echo \"(add unit tests later)\""
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0"
+  }
+}
+</file>
+
+<file path="apps/api/tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "lib": ["es2021", "webworker"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["@cloudflare/workers-types"],
+    "resolveJsonModule": true,
+    "allowJs": false
+  },
+  "include": ["src"]
+}
+</file>
+
+<file path="apps/web/public/_headers">
+# https://developers.cloudflare.com/workers/static-assets/headers
+# https://opennext.js.org/cloudflare/caching#static-assets-caching
+/_next/static/*
+  Cache-Control: public,max-age=31536000,immutable
+</file>
+
+<file path="apps/web/src/app/metrics/page.tsx">
+export const runtime = "edge";
+
+type MetricsPayload = {
+  window_ms: number;
+  since_ms: number;
+  swipes: number;
+  likes: number;
+  skips: number;
+  impressions: number;
+  like_rate: number | null;
+  skip_rate: number | null;
+  p50_deck_ms: number | null;
+};
+
+function pct(x: number | null) {
+  if (x === null) return "—";
+  return `${Math.round(x * 100)}%`;
+}
+
+function fmtMs(x: number | null) {
+  if (x === null) return "—";
+  return `${x} ms`;
+}
+
+export default async function MetricsPage() {
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
+  const token = process.env.API_ADMIN_TOKEN;
+
+  if (!token) {
+    return (
+      <main style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1>/metrics</h1>
+        <p>
+          Missing <code>API_ADMIN_TOKEN</code>. Add it to <code>apps/web/.env.local</code> (local)
+          and Cloudflare Pages env vars (deploy).
+        </p>
+      </main>
+    );
+  }
+
+  const res = await fetch(`${API_BASE}/v1/metrics?window=24h`, {
+    headers: { "x-admin-token": token },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    const details = res.headers.get("x-request-id");
+
+    return (
+      <main style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1>/metrics</h1>
+        <p>API returned {res.status}</p>
+        {details && (
+          <p>
+            Request id: <code>{details}</code>
+          </p>
+        )}
+        <pre style={{ whiteSpace: "pre-wrap" }}>{body}</pre>
+      </main>
+    );
+  }
+
+  const data = (await res.json()) as MetricsPayload;
+  const since = new Date(data.since_ms).toLocaleString();
+
+  return (
+    <main style={{ padding: 24, fontFamily: "system-ui", maxWidth: 900 }}>
+      <h1 style={{ marginBottom: 8 }}>ReelSwipe Metrics (last 24h)</h1>
+      <p style={{ marginTop: 0, opacity: 0.7 }}>Window start: {since}</p>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 12,
+          marginTop: 16,
+        }}
+      >
+        <Card label="Swipes" value={String(data.swipes)} />
+        <Card label="Impressions" value={String(data.impressions)} />
+        <Card label="Like rate" value={pct(data.like_rate)} />
+        <Card label="Skip rate" value={pct(data.skip_rate)} />
+        <Card label="Median deck latency" value={fmtMs(data.p50_deck_ms)} />
+      </div>
+
+      <details style={{ marginTop: 20 }}>
+        <summary>Raw JSON</summary>
+        <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(data, null, 2)}</pre>
+      </details>
+    </main>
+  );
+}
+
+function Card({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(0,0,0,0.12)",
+        borderRadius: 12,
+        padding: 14,
+      }}
+    >
+      <div style={{ fontSize: 12, opacity: 0.7 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6 }}>{value}</div>
+    </div>
+  );
+}
+</file>
+
+<file path="apps/web/src/app/page.tsx">
+"use client";
+
+import Link from "next/link";
+import { ClientDeck } from "../components/ClientDeck";
+
+export const dynamic = "force-dynamic";
+
+export default function Page() {
+  return (
+    <main className="min-h-screen bg-[#0b1220] text-white px-4 py-10">
+      <div className="mx-auto max-w-5xl">
+        <header className="space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-4xl font-semibold tracking-tight">ReelSwipe</h1>
+              <p className="mt-1 text-white/70">
+                Phase 4: Two-stage ranking (candidates + rerank), recent-popularity signals, and
+                session taste preferences.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/profile"
+                className="rounded-2xl border border-white/30 px-4 py-2 text-sm hover:border-white/60"
+              >
+                Profile view
+              </Link>
+              <Link
+                href="/metrics"
+                className="rounded-2xl border border-white/30 px-4 py-2 text-sm hover:border-white/60"
+              >
+                Metrics
+              </Link>
+            </div>
+          </div>
+          <p className="text-sm text-white/60">
+            A lightweight SQL candidate set combines recent popularity, genre cues, and trending
+            boosts before a rerank keeps the deck personal and diverse.
+          </p>
+        </header>
+
+        <div className="mt-10 rounded-3xl bg-white/5 p-6 ring-1 ring-white/10">
+          <ClientDeck />
+        </div>
+
+        <footer className="mt-12 text-xs text-white/40">
+          Phase 4 adds a two-stage reranker, recent-popularity smoothing, and evaluation telemetry
+          so we can measure every deck.
+        </footer>
+      </div>
+    </main>
+  );
+}
+</file>
+
+<file path="apps/web/src/components/MovieCard.tsx">
+import type { DeckMovie } from "../lib/api";
+
+export function MovieCard({ movie }: { movie: DeckMovie }) {
+  return (
+    <article className="relative h-[520px] w-[340px] overflow-hidden rounded-3xl bg-white/10 ring-1 ring-white/10 shadow-2xl">
+      <div className="absolute inset-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={movie.posterUrl ?? "https://placehold.co/600x900?text=No+Poster"}
+          alt={movie.title}
+          className="h-full w-full object-cover opacity-90"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
+      </div>
+
+      {movie.reasonCode ? (
+        <div className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs text-white/90 ring-1 ring-white/10">
+          {movie.reasonCode}
+        </div>
+      ) : null}
+
+      {typeof movie.score === "number" ? (
+        <div className="absolute right-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs text-white/70 ring-1 ring-white/10">
+          {movie.score.toFixed(3)}
+        </div>
+      ) : null}
+
+      <header className="absolute bottom-0 left-0 right-0 p-5">
+        <h2 className="text-xl font-semibold text-white">
+          {movie.title}
+          {movie.year ? <span className="text-white/70"> ({movie.year})</span> : null}
+        </h2>
+        {movie.genres?.length ? (
+          <p className="mt-1 text-sm text-white/70">{movie.genres.join(" • ")}</p>
+        ) : (
+          <p className="mt-1 text-sm text-white/50">&nbsp;</p>
+        )}
+      </header>
+    </article>
+  );
+}
+</file>
+
+<file path="apps/web/src/lib/api.ts">
+export type DeckMovie = {
+  id: string;
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  genres: string[];
+  reasonCode?: string;
+  score?: number;
+};
+
+export type DeckPayload = {
+  deck_id: string | null;
+  deck: DeckMovie[];
+};
+
+export type SwipeAction = "like" | "skip";
+
+export type ProfilePayload = {
+  session_id: string;
+  likes: number;
+  skips: number;
+  total: number;
+  top_genres: { genre_id: number; name: string; likes: number; skips: number; net: number }[];
+  recent: {
+    event_id: string;
+    action: SwipeAction;
+    ts_ms: number;
+    movie_id: string;
+    title: string;
+    year: number | null;
+    poster_url: string | null;
+    genres: string[];
+  }[];
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
+
+async function mustJson(res: Response) {
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
+export async function fetchDeck(sessionId: string, limit = 20): Promise<DeckPayload> {
+  const url = new URL(API_BASE + "/v1/deck");
+  url.searchParams.set("session_id", sessionId);
+  url.searchParams.set("limit", String(limit));
+
+  const res = await fetch(url.toString(), { method: "GET" });
+  return (await mustJson(res)) as DeckPayload;
+}
+
+export async function fetchProfile(sessionId: string): Promise<ProfilePayload> {
+  const url = new URL(API_BASE + "/v1/profile");
+  url.searchParams.set("session_id", sessionId);
+
+  const res = await fetch(url.toString(), { method: "GET" });
+  return (await mustJson(res)) as ProfilePayload;
+}
+
+export async function logSwipe(args: {
+  session_id: string;
+  deck_id: string;
+  movie_id: string;
+  action: SwipeAction;
+  ts_ms: number;
+  dwell_ms?: number;
+}) {
+  const idempotency = `${args.session_id}:${args.deck_id}:${args.movie_id}:${args.action}:${args.ts_ms}`;
+
+  const res = await fetch(API_BASE + "/v1/events/swipe", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-idempotency-key": idempotency,
+    },
+    body: JSON.stringify(args),
+  });
+
+  await mustJson(res);
+}
+</file>
+
+<file path="apps/web/.gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# OpenNext
+/.open-next
+
+# wrangler files
+.wrangler
+.dev.vars*
+
+
+!.dev.vars.example
+</file>
+
+<file path="apps/web/README.md">
+# OpenNext Starter
+
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+Read the documentation at https://opennext.js.org/cloudflare.
+
+## Develop
+
+Run the Next.js development server:
+
+```bash
+npm run dev
+# or similar package manager command
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+## Preview
+
+Preview the application locally on the Cloudflare runtime:
+
+```bash
+npm run preview
+# or similar package manager command
+```
+
+## Deploy
+
+Deploy the application to Cloudflare:
+
+```bash
+npm run deploy
+# or similar package manager command
+```
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+</file>
+
+<file path="apps/web/tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "types": ["./cloudflare-env.d.ts", "node"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", "next-env.d.ts", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}
+</file>
+
+<file path="docs/runbook.md">
+# ReelSwipe Runbook
+
+## Architecture (quick)
+
+- Web: Next.js + OpenNext on Cloudflare Pages
+- API: Cloudflare Workers (TypeScript)
+- DB: D1 (SQLite)
+- Data: TMDb sync
+
+Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set `API_ADMIN_TOKEN`, matching the API's `ADMIN_TOKEN` secret.
+
+## “Is it up?”
+
+### Local
+
+- Web: http://localhost:3000
+- API: http://localhost:8787/health
+
+Commands:
+
+```bash
+pnpm dev
+# or split into two shells
+pnpm --dir apps/api wrangler dev
+pnpm --dir apps/web dev
+```
+
+## Logs
+
+### Tail API logs (Cloudflare)
+
+```bash
+pnpm --dir apps/api wrangler tail
+```
+
+What to look for:
+
+- one JSON log line per request
+- fields: `req_id`, `route`, `status`, `dur_ms`
+- errors still include `req_id` and `error` details
+
+## Metrics
+
+### View /metrics
+
+- Web: https://localhost:3000/metrics (or your Pages preview)
+
+### Verify data is being written (local D1)
+
+```bash
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM swipe_events;"
+
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM recommendation_impressions;"
+
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM request_logs;"
+```
+
+### Spot-check recent request logs
+
+```bash
+pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT route, status, dur_ms, ts_ms FROM request_logs ORDER BY ts_ms DESC LIMIT 10;"
+```
+
+## Common failures
+
+### 401 admin required on /metrics
+
+- Ensure `API_ADMIN_TOKEN` is set for the web app (e.g., `apps/web/.env.local` or Cloudflare Pages env)
+- Confirm API has `ADMIN_TOKEN` secret and the header `x-admin-token` is sent
+
+### Metrics still showing zeros
+
+- Generate impressions/swipes in the last 24h (open the UI or seed events)
+- Try a wider window: `/v1/metrics?window=72h`
+- Query the DB directly (commands above)
+
+### D1 migration errors
+
+```bash
+pnpm --dir apps/api wrangler d1 migrations list DB --local
+pnpm --dir apps/api wrangler d1 migrations apply DB --local
+```
+
+### TMDb sync errors
+
+- Ensure `TMDB_API_KEY` (or your chosen TMDb secret) is configured
+- Review Worker logs for non-2xx responses
+
+## Runbook sanity checklist
+
+1. Confirm migrations applied locally (`wrangler d1 migrations apply DB --local`)
+2. Start the API (`pnpm --dir apps/api wrangler dev --port 8787`)
+3. Start the web (`NEXT_PUBLIC_API_BASE=http://localhost:8787 API_ADMIN_TOKEN=replace_me pnpm --dir apps/web dev --port 3000`)
+4. Hit `http://localhost:8787/health` and `http://localhost:3000/metrics`
+5. Tail logs (`pnpm --dir apps/api wrangler tail`) and watch for `req_id` + `dur_ms`
+
+## Production release checklist
+
+1. Push migrations to the prod D1 (`pnpm --dir apps/api wrangler d1 migrations apply reelswipe_prod --remote`) and verify tables exist; make sure `ADMIN_TOKEN` and (optionally) `TMDB_API_KEY` secrets are configured for the prod env.
+2. Trigger `.github/workflows/deploy.yml` via `workflow_dispatch` (choose `prod`) so both Workers deploy with the `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `PROD_API_BASE` secrets; alternatively run `pnpm --dir apps/api wrangler deploy --env prod` followed by `pnpm --dir apps/web build` + `pnpm --dir apps/web deploy --env prod` while keeping `CORS_ORIGIN`/`NEXT_PUBLIC_API_BASE` aligned with the public domains.
+3. For cautious rollouts, use `pnpm --dir apps/api wrangler versions upload --env prod` and `wrangler versions deploy --env prod --percentage <n>` to shift traffic up gradually while watching logs.
+4. After deployments finish, run `./scripts/smoke-prod.sh https://<YOUR_API_PROD_DOMAIN>` to exercise `/health` and `/v1/movies`.
+5. Load the prod web URL, swipe through a few cards, and visit `/metrics` (with the admin token) to confirm the UI renders and metrics respond.
+
+## Post-release verification
+
+- Tail the API worker logs (`pnpm --dir apps/api wrangler tail --env prod`) and look for `[scheduled]` messages so you know the cron sync and log pruning completed without errors.
+- Check that the smoke script or manual curls still succeed, and watch `/metrics` to ensure request throughput/latency are reasonable given the sampled logs.
+- Confirm the web app stays responsive, cards continue to load, and swipes are recorded (you can also inspect D1 tables or `/metrics` to double-check).
+- Watch the prod `LOG_SAMPLE_RATE` and `REQUEST_LOG_RETENTION_DAYS` values so logging stays at the conservative levels configured in the env.
+- Keep the `scripts/smoke-prod.sh` invocation handy for quick re-runs after any rollback or follow-up deploy.
+
+## Rollback notes
+
+- Use Cloudflare Versions to route traffic back to the previous release (both `reelswipe-api-prod` and `reelswipe-web-prod`) or redeploy a known-good git tag.
+- If request logging is blocking the worker, set `LOG_SAMPLE_RATE=0` (or temporarily skip the log insert) in prod env vars, redeploy, and rerun `./scripts/smoke-prod.sh` to ensure the surface is still healthy.
+- Restore data via `wrangler d1 time-travel restore reelswipe_prod --timestamp=...` if a migration/data change corrupted prod; rerun the smoke script afterward.
+</file>
+
+<file path="e2e/metrics.spec.ts">
+import { test, expect } from "@playwright/test";
+
+test("metrics page loads", async ({ page }) => {
+  await page.goto("/metrics");
+  await expect(page.getByRole("heading", { name: /metrics/i })).toBeVisible();
+});
+
+test("metrics page shows helpful message when token missing", async ({ page }) => {
+  await page.goto("/metrics");
+  await expect(page.getByText(/Missing/i)).toBeVisible();
+});
+</file>
+
+<file path="scripts/smoke-prod.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+API_BASE="${1:?Usage: ./scripts/smoke-prod.sh https://api.example.com}"
+
+printf '[smoke] health\n'
+curl -fsS "$API_BASE/health" >/dev/null
+
+printf '[smoke] movies\n'
+curl -fsS "$API_BASE/v1/movies?limit=3" | head
+
+printf '[smoke] ok\n'
+</file>
+
+<file path="tools/ci/api-smoke.mjs">
+import { spawn } from "node:child_process";
+
+const API = "http://localhost:8787";
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitFor(url, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {}
+    await sleep(500);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function main() {
+  const child = spawn("pnpm", ["--dir", "apps/api", "exec", "wrangler", "dev", "--port", "8787"], {
+    stdio: "inherit",
+    env: { ...process.env },
+  });
+
+  try {
+    await waitFor(`${API}/health`);
+    const res = await fetch(`${API}/health`);
+    if (!res.ok) throw new Error("/health failed");
+
+    console.log("API smoke OK");
+  } finally {
+    child.kill("SIGTERM");
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+</file>
+
+<file path="tools/ml/eval_offline.mjs">
+import fs from "node:fs";
+import path from "node:path";
+import { checkSnapshotEvents } from "./data-quality.mjs";
+
+function mkdirp(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function readJson(p) {
+  return JSON.parse(fs.readFileSync(p, "utf8"));
+}
+
+function writeFile(p, s) {
+  mkdirp(path.dirname(p));
+  fs.writeFileSync(p, s);
+}
+
+function writeJson(p, v) {
+  writeFile(p, JSON.stringify(v, null, 2));
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[k] = v;
+  }
+  return out;
+}
+
+function dcg(rels) {
+  let s = 0;
+  for (let i = 0; i < rels.length; i++) {
+    const rel = rels[i];
+    const denom = Math.log2(i + 2);
+    s += rel / denom;
+  }
+  return s;
+}
+
+function ndcgAtK(rankedIds, truthSet, k) {
+  const rels = rankedIds.slice(0, k).map((id) => (truthSet.has(id) ? 1 : 0));
+  const ideal = Array.from({ length: Math.min(k, truthSet.size) }, () => 1);
+  const denom = dcg(ideal);
+  if (denom <= 0) return 0;
+  return dcg(rels) / denom;
+}
+
+function apAtK(rankedIds, truthSet, k) {
+  let hits = 0;
+  let sumPrec = 0;
+  const top = rankedIds.slice(0, k);
+  for (let i = 0; i < top.length; i++) {
+    if (truthSet.has(top[i])) {
+      hits += 1;
+      sumPrec += hits / (i + 1);
+    }
+  }
+  const denom = Math.min(truthSet.size, k);
+  return denom ? sumPrec / denom : 0;
+}
+
+const args = parseArgs(process.argv);
+const snapshotDir = String(args.snapshot || "");
+const modelDir = String(args.model || "");
+const outDir = String(args.out || modelDir || "");
+
+if (!snapshotDir) throw new Error("--snapshot is required");
+if (!modelDir) throw new Error("--model is required");
+if (!outDir) throw new Error("--out is required");
+
+checkSnapshotEvents(snapshotDir);
+const swipes = readJson(path.join(snapshotDir, "swipe_events.json"));
+const model = readJson(path.join(modelDir, "model.json"));
+const neighbors = readJson(path.join(modelDir, "neighbors.json"));
+
+// Build neighbor map
+const neighMap = new Map();
+for (const r of neighbors) {
+  const a = String(r.movie_id);
+  const arr = neighMap.get(a) ?? [];
+  arr.push({ id: String(r.neighbor_movie_id), score: Number(r.score) });
+  neighMap.set(a, arr);
+}
+
+// Build ordered likes per session
+const likesBySession = new Map();
+for (const s of swipes) {
+  if (s.action !== "like") continue;
+  const sid = String(s.session_id);
+  const arr = likesBySession.get(sid) ?? [];
+  arr.push({ movie_id: String(s.movie_id), ts_ms: Number(s.ts_ms ?? 0) });
+  likesBySession.set(sid, arr);
+}
+
+for (const [sid, arr] of likesBySession.entries()) {
+  arr.sort((a, b) => a.ts_ms - b.ts_ms);
+  const seen = new Set();
+  const dedup = [];
+  for (const x of arr) {
+    if (seen.has(x.movie_id)) continue;
+    seen.add(x.movie_id);
+    dedup.push(x);
+  }
+  likesBySession.set(sid, dedup);
+}
+
+// Offline split + eval
+const K = 10;
+let nSessions = 0;
+let sumNdcg = 0;
+let sumMap = 0;
+let sumRecall = 0;
+
+for (const arr of likesBySession.values()) {
+  if (arr.length < 3) continue;
+
+  const cut = Math.max(1, Math.floor(arr.length * 0.6));
+  const history = arr.slice(0, cut).map((x) => x.movie_id);
+  const holdout = arr.slice(cut).map((x) => x.movie_id);
+  if (!holdout.length) continue;
+
+  // Score candidates by summing neighbor scores from history
+  const scores = new Map();
+  for (const h of history) {
+    const ns = neighMap.get(h) ?? [];
+    for (const n of ns) {
+      if (history.includes(n.id)) continue;
+      scores.set(n.id, (scores.get(n.id) ?? 0) + n.score);
+    }
+  }
+
+  const ranked = Array.from(scores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 200)
+    .map((x) => x[0]);
+
+  const truth = new Set(holdout);
+
+  const ndcg = ndcgAtK(ranked, truth, K);
+  const map = apAtK(ranked, truth, K);
+
+  let hits = 0;
+  for (const id of ranked.slice(0, K)) if (truth.has(id)) hits++;
+  const recall = truth.size ? hits / truth.size : 0;
+
+  nSessions++;
+  sumNdcg += ndcg;
+  sumMap += map;
+  sumRecall += recall;
+}
+
+const metrics = {
+  model_version: model.model_version,
+  snapshot_id: model.snapshot_id,
+  evaluated_at_ms: Date.now(),
+  eval: {
+    k: K,
+    sessions: nSessions,
+    ndcg_at_10: nSessions ? sumNdcg / nSessions : 0,
+    map_at_10: nSessions ? sumMap / nSessions : 0,
+    recall_at_10: nSessions ? sumRecall / nSessions : 0,
+  },
+};
+
+// Tiny ASCII bar chart
+function bar(x) {
+  const n = Math.max(0, Math.min(20, Math.round(x * 20)));
+  return "█".repeat(n) + "░".repeat(20 - n);
+}
+
+const report =
+  `# Phase 6 Offline Evaluation Report\n\n` +
+  `**Model:** ${metrics.model_version}  \n` +
+  `**Snapshot:** ${metrics.snapshot_id}  \n` +
+  `**Sessions evaluated:** ${metrics.eval.sessions}  \n\n` +
+  `## Metrics (k=${metrics.eval.k})\n\n` +
+  `| Metric | Value | Plot |\n` +
+  `|---|---:|---|\n` +
+  `| NDCG@10 | ${metrics.eval.ndcg_at_10.toFixed(4)} | ${bar(metrics.eval.ndcg_at_10)} |\n` +
+  `| MAP@10 | ${metrics.eval.map_at_10.toFixed(4)} | ${bar(metrics.eval.map_at_10)} |\n` +
+  `| Recall@10 | ${metrics.eval.recall_at_10.toFixed(4)} | ${bar(metrics.eval.recall_at_10)} |\n\n` +
+  `## Notes\n` +
+  `- This is an offline split inside each demo session.\n` +
+  `- Scores are based on summed neighbor similarities from historical likes.\n` +
+  `- If metrics are unstable, collect more sessions with 5+ likes each.\n`;
+
+mkdirp(outDir);
+writeJson(path.join(outDir, "metrics.json"), metrics);
+writeFile(path.join(outDir, "report.md"), report);
+
+console.log(JSON.stringify({ ok: true, out_dir: outDir, metrics }, null, 2));
+</file>
+
+<file path="tools/ml/snapshot.mjs">
+import fs from "node:fs";
+import path from "node:path";
+
+function mkdirp(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
+
+function readWranglerJson(p) {
+  if (!fs.existsSync(p)) return [];
+  const raw = fs.readFileSync(p, "utf8");
+  const obj = JSON.parse(raw);
+  if (Array.isArray(obj)) return obj;
+  if (obj?.result?.[0]?.results) return obj.result[0].results;
+  if (obj?.results) return obj.results;
+  return [];
+}
+
+function writeJson(p, v) {
+  mkdirp(path.dirname(p));
+  fs.writeFileSync(p, JSON.stringify(v, null, 2));
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const k = a.slice(2);
+    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[k] = v;
+  }
+  return out;
+}
+
+const args = parseArgs(process.argv);
+const snapshotId = String(args.snapshot || "").trim();
+const rawDir = String(args.raw || "artifacts/ml/raw");
+const outRoot = String(args.out || "artifacts/ml/snapshots");
+
+if (!snapshotId) {
+  console.error("--snapshot is required (example: 2025-12-30)");
+  process.exit(1);
+}
+
+const swipes = readWranglerJson(path.join(rawDir, "swipe_events.json"));
+const movies = readWranglerJson(path.join(rawDir, "movies.json"));
+const movieGenres = readWranglerJson(path.join(rawDir, "movie_genres.json"));
+const tmdbGenres = readWranglerJson(path.join(rawDir, "tmdb_genres.json"));
+
+const outDir = path.join(outRoot, snapshotId);
+mkdirp(outDir);
+
+writeJson(path.join(outDir, "swipe_events.json"), swipes);
+writeJson(path.join(outDir, "movies.json"), movies);
+writeJson(path.join(outDir, "movie_genres.json"), movieGenres);
+writeJson(path.join(outDir, "tmdb_genres.json"), tmdbGenres);
+
+const manifest = {
+  snapshot_id: snapshotId,
+  created_at: new Date().toISOString(),
+  counts: {
+    swipe_events: swipes.length,
+    movies: movies.length,
+    movie_genres: movieGenres.length,
+    tmdb_genres: tmdbGenres.length,
+  },
+  files: ["swipe_events.json", "movies.json", "movie_genres.json", "tmdb_genres.json"],
+};
+
+writeJson(path.join(outDir, "manifest.json"), manifest);
+console.log(JSON.stringify({ ok: true, out_dir: outDir, manifest }, null, 2));
+</file>
+
+<file path=".gitignore">
+# node dependencies
+/node_modules
+/apps/*/node_modules
+/packages/*/node_modules
+
+# build products
+/.turbo
+/.next
+/.open-next
+/apps/web/.next
+/apps/web/.open-next
+/apps/api/.open-next
+
+# tooling
+.turbo
+.wrangler
+/.wrangler
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# system
+.DS_Store
+
+# environment
+.env*
+.dev.vars*
+data/
+
+# artifacts (raw exports are local-only)
+artifacts/ml/raw/**
+</file>
+
+<file path=".prettierignore">
+node_modules
+.next
+.turbo
+.dist
+.playwright
+playwright-report
+</file>
+
+<file path=".prettierrc.json">
+{
+  "semi": true,
+  "singleQuote": false,
+  "printWidth": 100
+}
+</file>
+
+<file path=".repomixignore">
+apps/web/cloudflare-env.d.ts
+*.svg
+</file>
+
+<file path="package.json">
+{
+  "name": "reelswipe",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "eval": "node tools/eval/eval.mjs",
+    "eval:from-d1": "node tools/eval/eval.mjs --input artifacts/eval/rows.json",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test:integration": "node tools/ci/api-smoke.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.0.0",
+    "wrangler": "4.54.0"
+  }
+}
+</file>
+
+<file path="playwright.config.ts">
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./e2e",
+  timeout: 30_000,
+  retries: process.env.CI ? 1 : 0,
+  use: {
+    baseURL: process.env.E2E_BASE_URL || "http://localhost:3000",
+    trace: "on-first-retry",
+  },
+  reporter: [["html", { open: "never" }], ["list"]],
+});
+</file>
+
+<file path="pnpm-workspace.yaml">
+packages:
+  - "apps/*"
+  - "packages/*"
+</file>
+
+<file path=".github/workflows/ci.yml">
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format (check)
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration smoke
+        run: pnpm test:integration
+
+      - name: Build
+        run: pnpm build
+
+      - name: Eval (deterministic sample)
+        run: node tools/eval/eval.mjs --out-md artifacts/eval/report.md --out-json artifacts/eval/report.json
+
+      - name: Upload eval artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: artifacts/eval/
+
+  e2e:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps
+
+      - name: Start API (background)
+        run: pnpm --dir apps/api wrangler dev --port 8787 &
+
+      - name: Start Web (background)
+        env:
+          NEXT_PUBLIC_API_BASE: http://localhost:8787
+          API_ADMIN_TOKEN: ${{ secrets.API_ADMIN_TOKEN }}
+        run: pnpm --dir apps/web dev --port 3000 &
+
+      - name: Wait for Web
+        run: |
+          node -e "const t=setInterval(async()=>{try{const r=await fetch('http://localhost:3000'); if(r.ok){clearInterval(t); process.exit(0)}}catch{}},500); setTimeout(()=>{console.error('timeout'); process.exit(1)},30000)"
+
+      - name: Run Playwright
+        env:
+          E2E_BASE_URL: http://localhost:3000
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+</file>
+
+<file path=".github/PULL_REQUEST_TEMPLATE.md">
+## What changed?
+
+## Why?
+
+## How to test
+
+- [ ] `pnpm lint`
+- [ ] `pnpm typecheck`
+- [ ] `pnpm test`
+- [ ] Manual: (steps)
+
+## Screenshots (if UI)
+
+## Checklist
+
+- [ ] Docs updated (if needed)
+- [ ] No secrets committed
+- [ ] Small, reviewable PR
+</file>
+
 <file path="apps/api/src/lib/db.ts">
 import type { Env } from "../types";
 import type { TwoStageCandidate } from "./ranker";
@@ -766,10 +1883,7 @@ export async function recordRequestLog(db: D1Database, row: RequestLogRow) {
     .run();
 }
 
-export async function pruneRequestLogs(
-  db: D1Database,
-  cutoffTsMs: number,
-): Promise<void> {
+export async function pruneRequestLogs(db: D1Database, cutoffTsMs: number): Promise<void> {
   await db.prepare("DELETE FROM request_logs WHERE ts_ms < ?").bind(cutoffTsMs).run();
 }
 
@@ -894,7 +2008,9 @@ export async function getCurrentModelVersion(env: Env): Promise<string> {
 
 export async function modelVersionExists(env: Env, modelVersion: string): Promise<boolean> {
   const row = await one<{ n: number }>(
-    env.DB.prepare("SELECT COUNT(*) AS n FROM model_versions WHERE model_version = ?1").bind(modelVersion),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM model_versions WHERE model_version = ?1").bind(
+      modelVersion,
+    ),
   );
   return Number(row?.n ?? 0) > 0;
 }
@@ -1436,7 +2552,7 @@ export function withCors(resp: Response, origin = "*") {
   headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   headers.set(
     "Access-Control-Allow-Headers",
-    "content-type, x-request-id, x-idempotency-key, authorization"
+    "content-type, x-request-id, x-idempotency-key, authorization",
   );
   return new Response(resp.body, { status: resp.status, headers });
 }
@@ -1449,48 +2565,6 @@ export function json(payload: unknown, status = 200, extra?: HeadersInit) {
 
 export function requestId() {
   return crypto.randomUUID();
-}
-</file>
-
-<file path="apps/api/src/lib/log.ts">
-export type LogLevel = "info" | "warn" | "error";
-
-type LogFields = Record<string, unknown>;
-
-export function log(level: LogLevel, fields: LogFields) {
-  const record = {
-    ts: new Date().toISOString(),
-    level,
-    ...fields,
-  };
-
-  const line = JSON.stringify(record);
-
-  if (level === "error") console.error(line);
-  else if (level === "warn") console.warn(line);
-  else console.log(line);
-}
-</file>
-
-<file path="apps/api/src/lib/random.ts">
-export function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function shuffleInPlace<T>(arr: T[], seed: number) {
-  const rand = mulberry32(seed);
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
 }
 </file>
 
@@ -1565,19 +2639,16 @@ export function rerankTwoStage(args: {
     const sourceBoost = c.source === "tmdb_trending_week" ? 0.15 : 0;
     const cf = cfRaw[i] / cfMax;
     const score =
-      0.45 * clamp01(pop) +
-      0.25 * clamp01((pref + 1) / 2) +
-      0.25 * clamp01(cf) +
-      sourceBoost;
+      0.45 * clamp01(pop) + 0.25 * clamp01((pref + 1) / 2) + 0.25 * clamp01(cf) + sourceBoost;
 
     const reasonCode =
       c.source === "tmdb_trending_week"
         ? "hybrid_trending_week"
         : cf > 0.25
-        ? "hybrid_cf"
-        : pref > 0.15
-        ? "hybrid_personalized"
-        : "hybrid_popular_recent";
+          ? "hybrid_cf"
+          : pref > 0.15
+            ? "hybrid_personalized"
+            : "hybrid_popular_recent";
 
     return {
       id: c.movie_id,
@@ -1621,12 +2692,7 @@ export function rerankTwoStage(args: {
 
 <file path="apps/api/src/lib/sync.ts">
 import type { Env } from "../types";
-import {
-  fetchMovieGenres,
-  fetchTrendingWeek,
-  releaseYear,
-  tmdbPosterUrl,
-} from "./tmdb";
+import { fetchMovieGenres, fetchTrendingWeek, releaseYear, tmdbPosterUrl } from "./tmdb";
 import { rebuildMovieGenresForMovies, upsertGenres, upsertMovies } from "./db";
 
 export async function syncGenres(env: Env) {
@@ -1657,7 +2723,10 @@ export async function syncTrendingMovies(env: Env) {
   }));
 
   const result = await upsertMovies(env, movies, now);
-  await rebuildMovieGenresForMovies(env, movies.map((m) => m.movie_id));
+  await rebuildMovieGenresForMovies(
+    env,
+    movies.map((m) => m.movie_id),
+  );
 
   return result;
 }
@@ -1708,7 +2777,7 @@ export function releaseYear(releaseDate?: string) {
 async function fetchTmdbJson<T>(
   env: Env,
   path: string,
-  params: Record<string, string | number | undefined> = {}
+  params: Record<string, string | number | undefined> = {},
 ): Promise<T> {
   assertKey(env);
 
@@ -2062,19 +3131,17 @@ async function handle(req: Request, env: Env, reqId: string, origin: string) {
     if (!(await requireAdmin(req, env))) return withCors(unauthorized(reqId), origin);
 
     const current = await getCurrentModelVersion(env);
-    const known = await env.DB
-      .prepare(
-        `SELECT model_version, snapshot_id, algo, created_at_ms
+    const known = await env.DB.prepare(
+      `SELECT model_version, snapshot_id, algo, created_at_ms
            FROM model_versions
           ORDER BY created_at_ms DESC
           LIMIT 25`,
-      )
-      .all<{
-        model_version: string;
-        snapshot_id: string;
-        algo: string;
-        created_at_ms: number;
-      }>();
+    ).all<{
+      model_version: string;
+      snapshot_id: string;
+      algo: string;
+      created_at_ms: number;
+    }>();
 
     return withCors(
       ok({ current_model_version: current, known_models: known.results ?? [] }, reqId),
@@ -2198,69 +3265,6 @@ export default {
 };
 </file>
 
-<file path="apps/api/src/types.ts">
-export interface Env {
-  DB: D1Database;
-  CORS_ORIGIN?: string;
-
-  // TMDb sync
-  TMDB_API_KEY?: string;
-
-  // Protect admin endpoints
-  ADMIN_TOKEN?: string;
-
-  // Phase 4 configurables
-  RANKER_MODE?: "two_stage" | "baseline";
-
-  // Phase 7 configurables
-  LOG_SAMPLE_RATE?: string;
-  REQUEST_LOG_RETENTION_DAYS?: string;
-}
-</file>
-
-<file path="apps/api/package.json">
-{
-  "name": "reelswipe-api",
-  "private": true,
-  "packageManager": "pnpm@10.26.2",
-  "scripts": {
-    "dev": "wrangler dev --port 8787",
-    "build": "tsc -p tsconfig.json --noEmit",
-    "deploy": "wrangler deploy",
-    "db:local:reset": "wrangler d1 migrations apply DB --local && wrangler d1 execute DB --local --command=\"PRAGMA foreign_keys=ON;\"",
-    "db:remote:apply": "wrangler d1 migrations apply DB",
-    "db:local:count": "wrangler d1 execute DB --local --command=\"SELECT COUNT(*) AS n FROM movies;\"",
-    "db:remote:count": "wrangler d1 execute DB --command=\"SELECT COUNT(*) AS n FROM movies;\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "echo \"(add lint later)\"",
-    "test": "echo \"(add unit tests later)\""
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.0.0"
-  }
-}
-</file>
-
-<file path="apps/api/tsconfig.json">
-{
-  "compilerOptions": {
-    "target": "es2020",
-    "lib": ["es2021", "webworker"],
-    "module": "esnext",
-    "moduleResolution": "node",
-    "strict": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "types": ["@cloudflare/workers-types"],
-    "resolveJsonModule": true,
-    "allowJs": false
-  },
-  "include": ["src"]
-}
-</file>
-
 <file path="apps/api/wrangler.jsonc">
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
@@ -2270,20 +3274,20 @@ export interface Env {
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
   },
   "vars": {
     "CORS_ORIGIN": "http://localhost:3000",
     "LOG_SAMPLE_RATE": "1.0",
-    "REQUEST_LOG_RETENTION_DAYS": "30"
+    "REQUEST_LOG_RETENTION_DAYS": "30",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "reelswipe_dev",
       "database_id": "<PASTE_UUID_HERE>",
-      "preview_database_id": "DB"
-    }
+      "preview_database_id": "DB",
+    },
   ],
   "env": {
     "prod": {
@@ -2292,145 +3296,27 @@ export interface Env {
         {
           "binding": "DB",
           "database_name": "reelswipe_prod",
-          "database_id": "<PASTE_PROD_DB_ID>"
-        }
+          "database_id": "<PASTE_PROD_DB_ID>",
+        },
       ],
       "vars": {
         "CORS_ORIGIN": "https://<YOUR_WEB_PROD_DOMAIN>",
         "LOG_SAMPLE_RATE": "0.2",
-        "REQUEST_LOG_RETENTION_DAYS": "14"
+        "REQUEST_LOG_RETENTION_DAYS": "14",
       },
       "triggers": {
-        "crons": ["10 5 * * *"]
-      }
-    }
-  }
+        "crons": ["10 5 * * *"],
+      },
+    },
+  },
 }
 </file>
 
 <file path="apps/web/.vscode/settings.json">
 {
-	"files.associations": {
-		"wrangler.json": "jsonc"
-	}
-}
-</file>
-
-<file path="apps/web/public/_headers">
-# https://developers.cloudflare.com/workers/static-assets/headers
-# https://opennext.js.org/cloudflare/caching#static-assets-caching
-/_next/static/*
-  Cache-Control: public,max-age=31536000,immutable
-</file>
-
-<file path="apps/web/src/app/metrics/page.tsx">
-export const runtime = "edge";
-
-type MetricsPayload = {
-  window_ms: number;
-  since_ms: number;
-  swipes: number;
-  likes: number;
-  skips: number;
-  impressions: number;
-  like_rate: number | null;
-  skip_rate: number | null;
-  p50_deck_ms: number | null;
-};
-
-function pct(x: number | null) {
-  if (x === null) return "—";
-  return `${Math.round(x * 100)}%`;
-}
-
-function fmtMs(x: number | null) {
-  if (x === null) return "—";
-  return `${x} ms`;
-}
-
-export default async function MetricsPage() {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
-  const token = process.env.API_ADMIN_TOKEN;
-
-  if (!token) {
-    return (
-      <main style={{ padding: 24, fontFamily: "system-ui" }}>
-        <h1>/metrics</h1>
-        <p>
-          Missing <code>API_ADMIN_TOKEN</code>. Add it to <code>apps/web/.env.local</code> (local)
-          and Cloudflare Pages env vars (deploy).
-        </p>
-      </main>
-    );
+  "files.associations": {
+    "wrangler.json": "jsonc"
   }
-
-  const res = await fetch(`${API_BASE}/v1/metrics?window=24h`, {
-    headers: { "x-admin-token": token },
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    const details = res.headers.get("x-request-id");
-
-    return (
-      <main style={{ padding: 24, fontFamily: "system-ui" }}>
-        <h1>/metrics</h1>
-        <p>API returned {res.status}</p>
-        {details && (
-          <p>
-            Request id: <code>{details}</code>
-          </p>
-        )}
-        <pre style={{ whiteSpace: "pre-wrap" }}>{body}</pre>
-      </main>
-    );
-  }
-
-  const data = (await res.json()) as MetricsPayload;
-  const since = new Date(data.since_ms).toLocaleString();
-
-  return (
-    <main style={{ padding: 24, fontFamily: "system-ui", maxWidth: 900 }}>
-      <h1 style={{ marginBottom: 8 }}>ReelSwipe Metrics (last 24h)</h1>
-      <p style={{ marginTop: 0, opacity: 0.7 }}>Window start: {since}</p>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 12,
-          marginTop: 16,
-        }}
-      >
-        <Card label="Swipes" value={String(data.swipes)} />
-        <Card label="Impressions" value={String(data.impressions)} />
-        <Card label="Like rate" value={pct(data.like_rate)} />
-        <Card label="Skip rate" value={pct(data.skip_rate)} />
-        <Card label="Median deck latency" value={fmtMs(data.p50_deck_ms)} />
-      </div>
-
-      <details style={{ marginTop: 20 }}>
-        <summary>Raw JSON</summary>
-        <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(data, null, 2)}</pre>
-      </details>
-    </main>
-  );
-}
-
-function Card({ label, value }: { label: string; value: string }) {
-  return (
-    <div
-      style={{
-        border: "1px solid rgba(0,0,0,0.12)",
-        borderRadius: 12,
-        padding: 14,
-      }}
-    >
-      <div style={{ fontSize: 12, opacity: 0.7 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6 }}>{value}</div>
-    </div>
-  );
 }
 </file>
 
@@ -2497,9 +3383,7 @@ export default function ProfilePage() {
         </button>
       </section>
 
-      {err ? (
-        <div className="rounded border p-3 text-sm">Error: {err}</div>
-      ) : null}
+      {err ? <div className="rounded border p-3 text-sm">Error: {err}</div> : null}
 
       {data ? (
         <>
@@ -2556,7 +3440,9 @@ export default function ProfilePage() {
                     <div className="opacity-80">{r.action}</div>
                   </div>
                   <div className="text-xs opacity-70 mt-1">{fmt(r.ts_ms)}</div>
-                  <div className="text-xs mt-2">Genres: {(r.genres ?? []).join(", ") || "(none)"}</div>
+                  <div className="text-xs mt-2">
+                    Genres: {(r.genres ?? []).join(", ") || "(none)"}
+                  </div>
                 </div>
               ))}
             </div>
@@ -2572,28 +3458,28 @@ export default function ProfilePage() {
 @import "tailwindcss";
 
 :root {
-	--background: #ffffff;
-	--foreground: #171717;
+  --background: #ffffff;
+  --foreground: #171717;
 }
 
 @theme inline {
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-	--font-sans: var(--font-geist-sans);
-	--font-mono: var(--font-geist-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
-	:root {
-		--background: #0a0a0a;
-		--foreground: #ededed;
-	}
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
 }
 
 body {
-	background: var(--background);
-	color: var(--foreground);
-	font-family: Arial, Helvetica, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
 }
 </file>
 
@@ -2603,88 +3489,32 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
-	variable: "--font-geist-sans",
-	subsets: ["latin"],
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
 });
 
 const geistMono = Geist_Mono({
-	variable: "--font-geist-mono",
-	subsets: ["latin"],
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-	title: "ReelSwipe",
-	description: "Phase 3 baseline recommender demo for ReelSwipe",
+  title: "ReelSwipe",
+  description: "Phase 3 baseline recommender demo for ReelSwipe",
 };
 
 export default function RootLayout({
-	children,
+  children,
 }: Readonly<{
-	children: React.ReactNode;
+  children: React.ReactNode;
 }>) {
-	return (
-		<html lang="en">
-			<head>
-				<link rel="icon" href="/favicon.svg" type="image/svg+xml"></link>
-			</head>
-			<body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
-		</html>
-	);
-}
-</file>
-
-<file path="apps/web/src/app/page.tsx">
-"use client";
-
-import Link from "next/link";
-import { ClientDeck } from "../components/ClientDeck";
-
-export const dynamic = "force-dynamic";
-
-export default function Page() {
   return (
-    <main className="min-h-screen bg-[#0b1220] text-white px-4 py-10">
-      <div className="mx-auto max-w-5xl">
-        <header className="space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 className="text-4xl font-semibold tracking-tight">ReelSwipe</h1>
-              <p className="mt-1 text-white/70">
-                Phase 4: Two-stage ranking (candidates + rerank), recent-popularity signals, and
-                session taste preferences.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Link
-                href="/profile"
-                className="rounded-2xl border border-white/30 px-4 py-2 text-sm hover:border-white/60"
-              >
-                Profile view
-              </Link>
-              <Link
-                href="/metrics"
-                className="rounded-2xl border border-white/30 px-4 py-2 text-sm hover:border-white/60"
-              >
-                Metrics
-              </Link>
-            </div>
-          </div>
-          <p className="text-sm text-white/60">
-            A lightweight SQL candidate set combines recent popularity, genre cues, and trending
-            boosts before a rerank keeps the deck personal and diverse.
-          </p>
-        </header>
-
-        <div className="mt-10 rounded-3xl bg-white/5 p-6 ring-1 ring-white/10">
-          <ClientDeck />
-        </div>
-
-        <footer className="mt-12 text-xs text-white/40">
-          Phase 4 adds a two-stage reranker, recent-popularity smoothing, and evaluation telemetry
-          so we can measure every deck.
-        </footer>
-      </div>
-    </main>
+    <html lang="en">
+      <head>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml"></link>
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
+    </html>
   );
 }
 </file>
@@ -2716,24 +3546,21 @@ export function ClientDeck() {
 
   const canReset = useMemo(() => !!sessionId, [sessionId]);
 
-  const loadDeck = useCallback(
-    async (sid: string, silent = false) => {
-      if (!silent) {
-        setStatus("loading");
-        setError(null);
-      }
-      try {
-        const { deck_id, deck } = await fetchDeck(sid, 20);
-        setDeckId(deck_id);
-        setDeck(deck);
-        setStatus("ready");
-      } catch (e) {
-        setStatus("error");
-        setError(e instanceof Error ? e.message : "unknown error");
-      }
-    },
-    []
-  );
+  const loadDeck = useCallback(async (sid: string, silent = false) => {
+    if (!silent) {
+      setStatus("loading");
+      setError(null);
+    }
+    try {
+      const { deck_id, deck } = await fetchDeck(sid, 20);
+      setDeckId(deck_id);
+      setDeck(deck);
+      setStatus("ready");
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof Error ? e.message : "unknown error");
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2797,7 +3624,9 @@ export function ClientDeck() {
       ) : status === "error" ? (
         <div className="w-[360px] rounded-3xl bg-red-500/10 p-4 ring-1 ring-red-500/20">
           <p className="text-sm text-red-200">{error ?? "Failed"}</p>
-          <p className="mt-2 text-xs text-white/60">Check that the API is running and NEXT_PUBLIC_API_BASE is set.</p>
+          <p className="mt-2 text-xs text-white/60">
+            Check that the API is running and NEXT_PUBLIC_API_BASE is set.
+          </p>
         </div>
       ) : deckId ? (
         <SwipeDeck
@@ -2827,50 +3656,6 @@ export function ClientDeck() {
       {sessionId ? <p className="mt-4 text-xs text-white/40">Session: {sessionId}</p> : null}
       {deckId ? <p className="mt-1 text-xs text-white/30">Deck: {deckId.slice(0, 10)}…</p> : null}
     </div>
-  );
-}
-</file>
-
-<file path="apps/web/src/components/MovieCard.tsx">
-import type { DeckMovie } from "../lib/api";
-
-export function MovieCard({ movie }: { movie: DeckMovie }) {
-  return (
-    <article className="relative h-[520px] w-[340px] overflow-hidden rounded-3xl bg-white/10 ring-1 ring-white/10 shadow-2xl">
-      <div className="absolute inset-0">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={movie.posterUrl ?? "https://placehold.co/600x900?text=No+Poster"}
-          alt={movie.title}
-          className="h-full w-full object-cover opacity-90"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
-      </div>
-
-      {movie.reasonCode ? (
-        <div className="absolute left-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs text-white/90 ring-1 ring-white/10">
-          {movie.reasonCode}
-        </div>
-      ) : null}
-
-      {typeof movie.score === "number" ? (
-        <div className="absolute right-4 top-4 rounded-full bg-black/50 px-3 py-1 text-xs text-white/70 ring-1 ring-white/10">
-          {movie.score.toFixed(3)}
-        </div>
-      ) : null}
-
-      <header className="absolute bottom-0 left-0 right-0 p-5">
-        <h2 className="text-xl font-semibold text-white">
-          {movie.title}
-          {movie.year ? <span className="text-white/70"> ({movie.year})</span> : null}
-        </h2>
-        {movie.genres?.length ? (
-          <p className="mt-1 text-sm text-white/70">{movie.genres.join(" • ")}</p>
-        ) : (
-          <p className="mt-1 text-sm text-white/50">&nbsp;</p>
-        )}
-      </header>
-    </article>
   );
 }
 </file>
@@ -2931,7 +3716,7 @@ export function SwipeDeck({
         }
       }, 230);
     },
-    [top, onSwipe]
+    [top, onSwipe],
   );
 
   const snapBack = () => {
@@ -3034,151 +3819,12 @@ export function SwipeDeck({
         </button>
       </div>
 
-      <p className="mt-3 text-center text-xs text-white/50">Tip: focus the deck and use ArrowLeft / ArrowRight</p>
+      <p className="mt-3 text-center text-xs text-white/50">
+        Tip: focus the deck and use ArrowLeft / ArrowRight
+      </p>
     </div>
   );
 }
-</file>
-
-<file path="apps/web/src/lib/api.ts">
-export type DeckMovie = {
-  id: string;
-  title: string;
-  year: number | null;
-  posterUrl: string | null;
-  genres: string[];
-  reasonCode?: string;
-  score?: number;
-};
-
-export type DeckPayload = {
-  deck_id: string | null;
-  deck: DeckMovie[];
-};
-
-export type SwipeAction = "like" | "skip";
-
-export type ProfilePayload = {
-  session_id: string;
-  likes: number;
-  skips: number;
-  total: number;
-  top_genres: { genre_id: number; name: string; likes: number; skips: number; net: number }[];
-  recent: {
-    event_id: string;
-    action: SwipeAction;
-    ts_ms: number;
-    movie_id: string;
-    title: string;
-    year: number | null;
-    poster_url: string | null;
-    genres: string[];
-  }[];
-};
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
-
-async function mustJson(res: Response) {
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status}: ${t}`);
-  }
-  return res.json();
-}
-
-export async function fetchDeck(sessionId: string, limit = 20): Promise<DeckPayload> {
-  const url = new URL(API_BASE + "/v1/deck");
-  url.searchParams.set("session_id", sessionId);
-  url.searchParams.set("limit", String(limit));
-
-  const res = await fetch(url.toString(), { method: "GET" });
-  return (await mustJson(res)) as DeckPayload;
-}
-
-export async function fetchProfile(sessionId: string): Promise<ProfilePayload> {
-  const url = new URL(API_BASE + "/v1/profile");
-  url.searchParams.set("session_id", sessionId);
-
-  const res = await fetch(url.toString(), { method: "GET" });
-  return (await mustJson(res)) as ProfilePayload;
-}
-
-export async function logSwipe(args: {
-  session_id: string;
-  deck_id: string;
-  movie_id: string;
-  action: SwipeAction;
-  ts_ms: number;
-  dwell_ms?: number;
-}) {
-  const idempotency = `${args.session_id}:${args.deck_id}:${args.movie_id}:${args.action}:${args.ts_ms}`;
-
-  const res = await fetch(API_BASE + "/v1/events/swipe", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-idempotency-key": idempotency,
-    },
-    body: JSON.stringify(args),
-  });
-
-  await mustJson(res);
-}
-</file>
-
-<file path="apps/web/.gitignore">
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-!.env.example
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-
-# OpenNext
-/.open-next
-
-# wrangler files
-.wrangler
-.dev.vars*
-
-
-!.dev.vars.example
 </file>
 
 <file path="apps/web/eslint.config.mjs">
@@ -3190,7 +3836,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const compat = new FlatCompat({
-	baseDirectory: __dirname,
+  baseDirectory: __dirname,
 });
 
 const eslintConfig = [...compat.extends("next/core-web-vitals", "next/typescript")];
@@ -3202,7 +3848,7 @@ export default eslintConfig;
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-	/* config options here */
+  /* config options here */
 };
 
 export default nextConfig;
@@ -3217,138 +3863,57 @@ initOpenNextCloudflareForDev();
 import { defineCloudflareConfig } from "@opennextjs/cloudflare";
 
 export default defineCloudflareConfig({
-	// Uncomment to enable R2 cache,
-	// It should be imported as:
-	// `import r2IncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/r2-incremental-cache";`
-	// See https://opennext.js.org/cloudflare/caching for more details
-	// incrementalCache: r2IncrementalCache,
+  // Uncomment to enable R2 cache,
+  // It should be imported as:
+  // `import r2IncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/r2-incremental-cache";`
+  // See https://opennext.js.org/cloudflare/caching for more details
+  // incrementalCache: r2IncrementalCache,
 });
 </file>
 
 <file path="apps/web/package.json">
 {
-	"name": "web",
-	"version": "0.1.0",
-	"private": true,
-	"packageManager": "pnpm@10.26.2",
-	"scripts": {
-		"dev": "next dev",
-		"build": "next build",
-		"lint": "next lint",
-		"deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-		"preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-		"cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "echo \"(add E2E later)\""
-	},
-	"dependencies": {
-		"@opennextjs/cloudflare": "^1.14.4",
-		"next": "15.5.9",
-		"react": "19.1.4",
-		"react-dom": "19.1.4"
-	},
-	"devDependencies": {
-		"@eslint/eslintrc": "^3",
-		"@tailwindcss/postcss": "^4",
-		"@types/node": "20.19.27",
-		"@types/react": "^19",
-		"@types/react-dom": "^19",
-		"eslint": "^9",
-		"eslint-config-next": "15.4.6",
-		"tailwindcss": "^4",
-		"typescript": "^5",
-		"wrangler": "4.54.0"
-	}
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.26.2",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "lint": "next lint",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"(add E2E later)\""
+  },
+  "dependencies": {
+    "@opennextjs/cloudflare": "^1.14.4",
+    "next": "15.5.9",
+    "react": "19.1.4",
+    "react-dom": "19.1.4"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "20.19.27",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.6",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "wrangler": "4.54.0"
+  }
 }
 </file>
 
 <file path="apps/web/postcss.config.mjs">
 const config = {
-	plugins: ["@tailwindcss/postcss"],
+  plugins: ["@tailwindcss/postcss"],
 };
 
 export default config;
-</file>
-
-<file path="apps/web/README.md">
-# OpenNext Starter
-
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-
-## Getting Started
-
-Read the documentation at https://opennext.js.org/cloudflare.
-
-## Develop
-
-Run the Next.js development server:
-
-```bash
-npm run dev
-# or similar package manager command
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-## Preview
-
-Preview the application locally on the Cloudflare runtime:
-
-```bash
-npm run preview
-# or similar package manager command
-```
-
-## Deploy
-
-Deploy the application to Cloudflare:
-
-```bash
-npm run deploy
-# or similar package manager command
-```
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-</file>
-
-<file path="apps/web/tsconfig.json">
-{
-  "compilerOptions": {
-    "target": "es2024",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "preserve",
-    "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "paths": {
-      "@/*": ["./src/*"]
-    },
-    "types": ["./cloudflare-env.d.ts", "node"]
-  },
-  "include": ["**/*.ts", "**/*.tsx", "next-env.d.ts", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", ".next"]
-}
 </file>
 
 <file path="apps/web/wrangler.jsonc">
@@ -3357,61 +3922,58 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
 {
-	"$schema": "../../node_modules/wrangler/config-schema.json",
-	"name": "reelswipe-web",
-	"main": ".open-next/worker.js",
-	"compatibility_date": "2025-12-29",
-	"compatibility_flags": [
-		"nodejs_compat",
-		"global_fetch_strictly_public"
-	],
-	"assets": {
-		"binding": "ASSETS",
-		"directory": ".open-next/assets"
-	},
-	"images": {
-		// Enable image optimization
-		// see https://opennext.js.org/cloudflare/howtos/image
-		"binding": "IMAGES"
-	},
-	"services": [
-		{
-			"binding": "NEXT_CACHE_REVALIDATION_WORKER",
-			"service": "reelswipe-web"
-		}
-	],
-	"observability": {
-		"enabled": true
-	},
-	"vars": {
-		"NEXT_PUBLIC_API_BASE": "http://localhost:8787"
-	},
-	"env": {
-		"prod": {
-			"name": "reelswipe-web-prod",
-			"vars": {
-				"NEXT_PUBLIC_API_BASE": "https://<YOUR_API_PROD_DOMAIN>"
-			}
-		}
-	}
-	/**
-	 * Smart Placement
-	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-	 */
-	// "placement": {  "mode": "smart" }
-	/**
-	 * Bindings
-	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-	 * databases, object storage, AI inference, real-time communication and more.
-	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
-	 */
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "reelswipe-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-12-29",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets",
+  },
+  "images": {
+    // Enable image optimization
+    // see https://opennext.js.org/cloudflare/howtos/image
+    "binding": "IMAGES",
+  },
+  "services": [
+    {
+      "binding": "NEXT_CACHE_REVALIDATION_WORKER",
+      "service": "reelswipe-web",
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "NEXT_PUBLIC_API_BASE": "http://localhost:8787",
+  },
+  "env": {
+    "prod": {
+      "name": "reelswipe-web-prod",
+      "vars": {
+        "NEXT_PUBLIC_API_BASE": "https://<YOUR_API_PROD_DOMAIN>",
+      },
+    },
+  },
+  /**
+   * Smart Placement
+   * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+   */
+  // "placement": {  "mode": "smart" }
+  /**
+   * Bindings
+   * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
+   * databases, object storage, AI inference, real-time communication and more.
+   * https://developers.cloudflare.com/workers/runtime-apis/bindings/
+   */
+  /**
+   * Environment Variables
+   * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+   * Note: Use secrets to store sensitive data.
+   * https://developers.cloudflare.com/workers/configuration/secrets/
+   */
+  // "vars": {  "MY_VARIABLE": "production_value" }
 }
 </file>
 
@@ -3422,15 +3984,19 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 - Date: 2025-12-29
 
 ## Context
+
 What problem are we solving? What constraints matter?
 
 ## Decision
+
 What did we choose?
 
 ## Consequences
+
 What gets better/worse? What do we need to watch for?
 
 ## Alternatives considered
+
 - Option A:
 - Option B:
 </file>
@@ -3442,206 +4008,65 @@ What gets better/worse? What do we need to watch for?
 - Date: 2025-12-29
 
 ## Context
+
 Need a $0/month demo that’s globally fast and easy to deploy.
 
 ## Decision
+
 Use Next.js on Cloudflare Workers via @opennextjs/cloudflare, Workers for API, and D1 for persistence.
 
 ## Consequences
+
 Pros: single-vendor deploy, fast demo, simple ops.
 Cons: Worker size limits; Node compatibility constraints; some Next features require care.
 </file>
 
-<file path="docs/runbook.md">
-# ReelSwipe Runbook
+<file path="docs/adr/0002-data-quality-gate.md">
+# ADR-0002: Event-data quality gate for offline modeling
 
-## Architecture (quick)
+- Status: Accepted
+- Date: 2026-01-23
 
-- Web: Next.js + OpenNext on Cloudflare Pages
-- API: Cloudflare Workers (TypeScript)
-- DB: D1 (SQLite)
-- Data: TMDb sync
+## Context
 
-Copy `apps/web/.env.local.example` to `apps/web/.env.local` and set `API_ADMIN_TOKEN`, matching the API's `ADMIN_TOKEN` secret.
+Offline training and evaluation jobs (including the phased GitHub workflow and any scheduled retrains) currently assume the swipe + impression logs are well-formed. Bad data (missing keys, null critical fields, duplicate events) directly corrupts the item-item CF model that powers ReelSwipe metrics and release decisions. We need a very early gate so those jobs fail fast and stop shipping data that cannot be trusted.
 
-## “Is it up?”
+## Decision
 
-### Local
+- Define a concise contract for each event type we ingest for modeling/metrics:
+  - **Swipe event** (`swipe_events.json`): represents a user swipe with fields
+    - `event_id` (string, global primary key, required)
+    - `session_id` (string, required), serves as the “user” or anonymized session key
+    - `deck_id` (string, required)
+    - `movie_id` (string, required)
+    - `action` (string, required, allowed values `like` or `skip`)
+    - `ts_ms` (timestamp in milliseconds, required)
+    - Optional helpers: `dwell_ms` (ms number), `request_id` (string), `anon_user_id` (string or null)
+  - **Impression/deck-served event** (`recommendation_impressions.json`): carries delivery context
+    - `impression_id` (string, global primary key, required)
+    - `deck_id`, `session_id`, `movie_id` (strings, required)
+    - `rank` (number, required)
+    - `reason_code` (string, required)
+    - `ts_ms` (timestamp, required)
+    - Optional: `model_version`, `score`, `request_id` (`string | number | null` as appropriate)
+  - These definitions cover the completeness (critical columns must exist) plus optional metadata that can be null when absent.
+  - Uniqueness: the primary key field (`event_id` or `impression_id`) must never duplicate; missing PK rows are surfaced as completeness failures because the gate treats those columns as required.
 
-- Web: http://localhost:3000
-- API: http://localhost:8787/health
+- Implement the gate in `tools/ml/data-quality.mjs`, which can be invoked as `node tools/ml/data-quality.mjs --snapshot artifacts/ml/snapshots/<id>` or programmatically via `checkSnapshotEvents(snapshotDir)`. The script reads the per-snapshot JSON files and computes:
+  - **Completeness**: counts of missing/empty values for every required field and invalid type/enum violations (e.g., non-numeric `ts_ms` or actions outside `like|skip`). Anything with a missing rate > 0% on a required column fails the gate.
+  - **Uniqueness**: duplicate counts for the chosen key; samples of the worst offenders (top 20) are logged for debugging. Any duplicate (count > 0) also fails.
+  - Outputs a concise log per file indicating row counts, missing/invalid summaries, duplicate rate, and sample keys.
 
-Commands:
+- Wire the gate as the **first thing** offline modeling jobs execute:
+  - `tools/ml/train_itemitem_cf.mjs` and `tools/ml/eval_offline.mjs` now call `checkSnapshotEvents(snapshotDir)` immediately after validating CLI flags and before reading any rows.
+  - The GitHub `train-eval` workflow (and any scheduled reruns) use those entry points, so the gate implicitly runs on every job that builds or evaluates a model.
+  - Teams regenerating metrics artifacts (`tools/eval/eval.mjs` or similar) are encouraged to run the CLI gate before pointing the metric pipeline at a real snapshot; the helper is already in place if extra data is supplied.
 
-```bash
-pnpm dev
-# or split into two shells
-pnpm --dir apps/api wrangler dev
-pnpm --dir apps/web dev
-```
+## Consequences
 
-## Logs
-
-### Tail API logs (Cloudflare)
-
-```bash
-pnpm --dir apps/api wrangler tail
-```
-
-What to look for:
-
-- one JSON log line per request
-- fields: `req_id`, `route`, `status`, `dur_ms`
-- errors still include `req_id` and `error` details
-
-## Metrics
-
-### View /metrics
-
-- Web: https://localhost:3000/metrics (or your Pages preview)
-
-### Verify data is being written (local D1)
-
-```bash
-pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM swipe_events;"
-
-pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM recommendation_impressions;"
-
-pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT COUNT(*) AS n FROM request_logs;"
-```
-
-### Spot-check recent request logs
-
-```bash
-pnpm --dir apps/api wrangler d1 execute DB --local --command="SELECT route, status, dur_ms, ts_ms FROM request_logs ORDER BY ts_ms DESC LIMIT 10;"
-```
-
-## Common failures
-
-### 401 admin required on /metrics
-
-- Ensure `API_ADMIN_TOKEN` is set for the web app (e.g., `apps/web/.env.local` or Cloudflare Pages env)
-- Confirm API has `ADMIN_TOKEN` secret and the header `x-admin-token` is sent
-
-### Metrics still showing zeros
-
-- Generate impressions/swipes in the last 24h (open the UI or seed events)
-- Try a wider window: `/v1/metrics?window=72h`
-- Query the DB directly (commands above)
-
-### D1 migration errors
-
-```bash
-pnpm --dir apps/api wrangler d1 migrations list DB --local
-pnpm --dir apps/api wrangler d1 migrations apply DB --local
-```
-
-### TMDb sync errors
-
-- Ensure `TMDB_API_KEY` (or your chosen TMDb secret) is configured
-- Review Worker logs for non-2xx responses
-
-## Runbook sanity checklist
-
-1. Confirm migrations applied locally (`wrangler d1 migrations apply DB --local`)
-2. Start the API (`pnpm --dir apps/api wrangler dev --port 8787`)
-3. Start the web (`NEXT_PUBLIC_API_BASE=http://localhost:8787 API_ADMIN_TOKEN=replace_me pnpm --dir apps/web dev --port 3000`)
-4. Hit `http://localhost:8787/health` and `http://localhost:3000/metrics`
-5. Tail logs (`pnpm --dir apps/api wrangler tail`) and watch for `req_id` + `dur_ms`
-
-## Production release checklist
-
-1. Push migrations to the prod D1 (`pnpm --dir apps/api wrangler d1 migrations apply reelswipe_prod --remote`) and verify tables exist; make sure `ADMIN_TOKEN` and (optionally) `TMDB_API_KEY` secrets are configured for the prod env.
-2. Trigger `.github/workflows/deploy.yml` via `workflow_dispatch` (choose `prod`) so both Workers deploy with the `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `PROD_API_BASE` secrets; alternatively run `pnpm --dir apps/api wrangler deploy --env prod` followed by `pnpm --dir apps/web build` + `pnpm --dir apps/web deploy --env prod` while keeping `CORS_ORIGIN`/`NEXT_PUBLIC_API_BASE` aligned with the public domains.
-3. For cautious rollouts, use `pnpm --dir apps/api wrangler versions upload --env prod` and `wrangler versions deploy --env prod --percentage <n>` to shift traffic up gradually while watching logs.
-4. After deployments finish, run `./scripts/smoke-prod.sh https://<YOUR_API_PROD_DOMAIN>` to exercise `/health` and `/v1/movies`.
-5. Load the prod web URL, swipe through a few cards, and visit `/metrics` (with the admin token) to confirm the UI renders and metrics respond.
-
-## Post-release verification
-
-- Tail the API worker logs (`pnpm --dir apps/api wrangler tail --env prod`) and look for `[scheduled]` messages so you know the cron sync and log pruning completed without errors.
-- Check that the smoke script or manual curls still succeed, and watch `/metrics` to ensure request throughput/latency are reasonable given the sampled logs.
-- Confirm the web app stays responsive, cards continue to load, and swipes are recorded (you can also inspect D1 tables or `/metrics` to double-check).
-- Watch the prod `LOG_SAMPLE_RATE` and `REQUEST_LOG_RETENTION_DAYS` values so logging stays at the conservative levels configured in the env.
-- Keep the `scripts/smoke-prod.sh` invocation handy for quick re-runs after any rollback or follow-up deploy.
-
-## Rollback notes
-
-- Use Cloudflare Versions to route traffic back to the previous release (both `reelswipe-api-prod` and `reelswipe-web-prod`) or redeploy a known-good git tag.
-- If request logging is blocking the worker, set `LOG_SAMPLE_RATE=0` (or temporarily skip the log insert) in prod env vars, redeploy, and rerun `./scripts/smoke-prod.sh` to ensure the surface is still healthy.
-- Restore data via `wrangler d1 time-travel restore reelswipe_prod --timestamp=...` if a migration/data change corrupted prod; rerun the smoke script afterward.
-</file>
-
-<file path="e2e/metrics.spec.ts">
-import { test, expect } from "@playwright/test";
-
-test("metrics page loads", async ({ page }) => {
-  await page.goto("/metrics");
-  await expect(page.getByRole("heading", { name: /metrics/i })).toBeVisible();
-});
-
-test("metrics page shows helpful message when token missing", async ({ page }) => {
-  await page.goto("/metrics");
-  await expect(page.getByText(/Missing/i)).toBeVisible();
-});
-</file>
-
-<file path="scripts/smoke-prod.sh">
-#!/usr/bin/env bash
-set -euo pipefail
-
-API_BASE="${1:?Usage: ./scripts/smoke-prod.sh https://api.example.com}"
-
-printf '[smoke] health\n'
-curl -fsS "$API_BASE/health" >/dev/null
-
-printf '[smoke] movies\n'
-curl -fsS "$API_BASE/v1/movies?limit=3" | head
-
-printf '[smoke] ok\n'
-</file>
-
-<file path="tools/ci/api-smoke.mjs">
-import { spawn } from "node:child_process";
-
-const API = "http://localhost:8787";
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function waitFor(url, tries = 40) {
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {}
-    await sleep(500);
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
-
-async function main() {
-  const child = spawn("pnpm", ["--dir", "apps/api", "exec", "wrangler", "dev", "--port", "8787"], {
-    stdio: "inherit",
-    env: { ...process.env },
-  });
-
-  try {
-    await waitFor(`${API}/health`);
-    const res = await fetch(`${API}/health`);
-    if (!res.ok) throw new Error("/health failed");
-
-    console.log("API smoke OK");
-  } finally {
-    child.kill("SIGTERM");
-  }
-}
-
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+- Training/eval jobs now fail quickly when required fields are missing or duplicates exist, preventing stale or corrupt event data from tainting models or dashboards.
+- The gate also doubles as documentation: the ADR plus `tools/ml/data-quality.mjs` spells out the critical schema, data types, and thresholds people need to hit when exporting snapshots from D1.
+- Any future event-type additions can be accommodated by appending another spec to `EVENT_SPECS` so completeness/uniqueness stay enforced.
 </file>
 
 <file path="tools/eval/eval.mjs">
@@ -3763,7 +4188,9 @@ function computeReport(rows, k = 10) {
 function renderMarkdown(report) {
   const lines = [];
   lines.push(`# ReelSwipe Offline Evaluation`);
-  lines.push(`Interpret these as sanity metrics. Use them to compare model versions, not to claim truth.`);
+  lines.push(
+    `Interpret these as sanity metrics. Use them to compare model versions, not to claim truth.`,
+  );
   lines.push("");
 
   lines.push(`## Summary (k=${report.k})`);
@@ -3771,7 +4198,9 @@ function renderMarkdown(report) {
   lines.push(`| model_version | decks | impressions | NDCG@10 | MAP@10 |`);
   lines.push(`|---|---:|---:|---:|---:|`);
   for (const m of report.models) {
-    lines.push(`| ${m.model_version} | ${m.decks} | ${m.impressions} | ${m.ndcg_at_10.toFixed(4)} | ${m.map_at_10.toFixed(4)} |`);
+    lines.push(
+      `| ${m.model_version} | ${m.decks} | ${m.impressions} | ${m.ndcg_at_10.toFixed(4)} | ${m.map_at_10.toFixed(4)} |`,
+    );
   }
   lines.push("");
 
@@ -3787,7 +4216,9 @@ function renderMarkdown(report) {
   lines.push(`| deckKey | model | impressions | positives | NDCG@10 | MAP@10 |`);
   lines.push(`|---|---|---:|---:|---:|---:|`);
   for (const d of report.perDeckSample) {
-    lines.push(`| ${d.deckKey} | ${d.modelVersion} | ${d.impressions} | ${d.positives} | ${d.ndcg.toFixed(4)} | ${d.map.toFixed(4)} |`);
+    lines.push(
+      `| ${d.deckKey} | ${d.modelVersion} | ${d.impressions} | ${d.positives} | ${d.ndcg.toFixed(4)} | ${d.map.toFixed(4)} |`,
+    );
   }
 
   lines.push("");
@@ -3797,8 +4228,12 @@ function renderMarkdown(report) {
 // -------- main --------
 const args = process.argv.slice(2);
 const input = args.includes("--input") ? args[args.indexOf("--input") + 1] : null;
-const outMd = args.includes("--out-md") ? args[args.indexOf("--out-md") + 1] : "artifacts/eval/report.md";
-const outJson = args.includes("--out-json") ? args[args.indexOf("--out-json") + 1] : "artifacts/eval/report.json";
+const outMd = args.includes("--out-md")
+  ? args[args.indexOf("--out-md") + 1]
+  : "artifacts/eval/report.md";
+const outJson = args.includes("--out-json")
+  ? args[args.indexOf("--out-json") + 1]
+  : "artifacts/eval/report.json";
 
 let rows;
 if (input) {
@@ -3853,9 +4288,7 @@ const skips = swipes.filter((s) => s.action === "skip").length;
 
 const likeRate = totalSwipes ? likes / totalSwipes : 0;
 
-const dwell = swipes
-  .map((s) => Number(s.dwell_ms))
-  .filter((n) => Number.isFinite(n) && n >= 0);
+const dwell = swipes.map((s) => Number(s.dwell_ms)).filter((n) => Number.isFinite(n) && n >= 0);
 
 const meanDwell = dwell.length ? dwell.reduce((a, b) => a + b, 0) / dwell.length : 0;
 
@@ -3879,25 +4312,244 @@ console.log("top liked:");
 for (const [movieId, n] of topLiked) console.log(`  ${movieId}: ${n}`);
 </file>
 
-<file path="tools/ml/eval_offline.mjs">
+<file path="tools/ml/data-quality.mjs">
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-function mkdirp(p) {
-  fs.mkdirSync(p, { recursive: true });
+const swipeActionSet = new Set(["like", "skip"]);
+
+const EVENT_SPECS = [
+  {
+    name: "swipe",
+    file: "swipe_events.json",
+    description: "User swipe actions (likes/skips) that feed training + eval.",
+    required: true,
+    uniqueKey: (row) => row.event_id,
+    fields: {
+      event_id: { required: true, type: "string" },
+      session_id: { required: true, type: "string" },
+      deck_id: { required: true, type: "string" },
+      movie_id: { required: true, type: "string" },
+      action: { required: true, type: "string", allowed: swipeActionSet },
+      ts_ms: { required: true, type: "timestamp" },
+      dwell_ms: { required: false, type: "number_or_null" },
+      request_id: { required: false, type: "string_or_null" },
+      anon_user_id: { required: false, type: "string_or_null" },
+    },
+  },
+  {
+    name: "impression",
+    file: "recommendation_impressions.json",
+    description: "Deck-served impressions for labeled eval + metrics.",
+    required: false,
+    uniqueKey: (row) => row.impression_id,
+    fields: {
+      impression_id: { required: true, type: "string" },
+      deck_id: { required: true, type: "string" },
+      session_id: { required: true, type: "string" },
+      movie_id: { required: true, type: "string" },
+      rank: { required: true, type: "number" },
+      reason_code: { required: true, type: "string" },
+      ts_ms: { required: true, type: "timestamp" },
+      model_version: { required: false, type: "string_or_null" },
+      score: { required: false, type: "number_or_null" },
+      request_id: { required: false, type: "string_or_null" },
+    },
+  },
+];
+
+const TYPE_CHECKS = {
+  number(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return true;
+    if (typeof value === "string" && value.trim() !== "") {
+      const n = Number(value);
+      return Number.isFinite(n);
+    }
+    return false;
+  },
+  number_or_null(value) {
+    return value === null || TYPE_CHECKS.number(value);
+  },
+  string(value) {
+    if (typeof value === "string" && value.trim() !== "") return true;
+    if (typeof value === "number") return true;
+    return false;
+  },
+  string_or_null(value) {
+    return value === null || TYPE_CHECKS.string(value);
+  },
+  timestamp(value) {
+    return TYPE_CHECKS.number(value);
+  },
+};
+
+function isMissing(value) {
+  return (
+    value === undefined || value === null || (typeof value === "string" && value.trim() === "")
+  );
 }
 
-function readJson(p) {
-  return JSON.parse(fs.readFileSync(p, "utf8"));
+function summarizeFields(rows, spec) {
+  const fieldStats = Object.fromEntries(
+    Object.keys(spec.fields).map((field) => [
+      field,
+      { missing: 0, invalid: 0, invalidExamples: [] },
+    ]),
+  );
+
+  const uniqueSeen = new Map();
+  const duplicateSamples = new Map();
+  let duplicateTotal = 0;
+  let missingKey = 0;
+
+  for (const row of rows) {
+    for (const [field, meta] of Object.entries(spec.fields)) {
+      const value = row[field];
+      if (meta.required && isMissing(value)) {
+        fieldStats[field].missing += 1;
+        continue;
+      }
+      if (!isMissing(value) && meta.type) {
+        const check = TYPE_CHECKS[meta.type];
+        if (check && !check(value)) {
+          fieldStats[field].invalid += 1;
+          if (fieldStats[field].invalidExamples.length < 3) {
+            fieldStats[field].invalidExamples.push(value);
+          }
+        }
+      }
+      if (!isMissing(value) && meta.allowed && !meta.allowed.has(String(value))) {
+        fieldStats[field].invalid += 1;
+        if (fieldStats[field].invalidExamples.length < 3) {
+          fieldStats[field].invalidExamples.push(value);
+        }
+      }
+    }
+
+    if (typeof spec.uniqueKey === "function") {
+      const key = spec.uniqueKey(row);
+      if (isMissing(key)) {
+        missingKey += 1;
+      } else {
+        const normalized = String(key);
+        const count = (uniqueSeen.get(normalized) ?? 0) + 1;
+        uniqueSeen.set(normalized, count);
+        if (count >= 2) {
+          duplicateTotal += 1;
+          duplicateSamples.set(normalized, count);
+        }
+      }
+    }
+  }
+
+  return {
+    total: rows.length,
+    fieldStats,
+    duplicateTotal,
+    duplicateSamples: Array.from(duplicateSamples.entries()),
+    missingKey,
+  };
 }
 
-function writeFile(p, s) {
-  mkdirp(path.dirname(p));
-  fs.writeFileSync(p, s);
+function formatRate(count, total) {
+  if (total === 0) return "0.00%";
+  return `${((count / total) * 100).toFixed(2)}%`;
 }
 
-function writeJson(p, v) {
-  writeFile(p, JSON.stringify(v, null, 2));
+function logSpecResult(spec, stats) {
+  console.log(`[DQ] ${spec.file} (${stats.total} rows)`);
+  for (const [field, meta] of Object.entries(spec.fields)) {
+    const { missing, invalid, invalidExamples } = stats.fieldStats[field];
+    const messages = [];
+    if (missing > 0) {
+      messages.push(`missing ${missing} (${formatRate(missing, stats.total)})`);
+    }
+    if (invalid > 0) {
+      const example = invalidExamples.length ? ` e.g. ${JSON.stringify(invalidExamples[0])}` : "";
+      messages.push(`invalid ${invalid}${example}`);
+    }
+    if (messages.length) {
+      console.log(`[DQ]   ${field}: ${messages.join("; ")}`);
+    } else {
+      console.log(`[DQ]   ${field}: ok`);
+    }
+  }
+  const dupRate = formatRate(stats.duplicateTotal, stats.total);
+  if (stats.duplicateTotal > 0) {
+    const samples = stats.duplicateSamples
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([key, count]) => `${key} (${count})`)
+      .join(", ");
+    console.log(
+      `[DQ]   duplicates: ${stats.duplicateTotal} rows (${dupRate}); samples: ${samples}`,
+    );
+  } else {
+    console.log(`[DQ]   duplicates: 0 rows`);
+  }
+}
+
+export function checkSnapshotEvents(snapshotDir) {
+  const errors = [];
+  const summary = [];
+
+  for (const spec of EVENT_SPECS) {
+    const filePath = path.join(snapshotDir, spec.file);
+    if (!fs.existsSync(filePath)) {
+      const message = `[DQ] missing file ${spec.file}`;
+      if (spec.required) {
+        errors.push(message);
+        console.error(`${message} (required)`);
+      } else {
+        console.warn(`${message}; skipping optional spec`);
+      }
+      continue;
+    }
+
+    const raw = fs.readFileSync(filePath, "utf8");
+    let rows;
+    try {
+      rows = JSON.parse(raw);
+    } catch (err) {
+      errors.push(`${spec.file}: invalid JSON`);
+      continue;
+    }
+
+    if (!Array.isArray(rows)) {
+      errors.push(`${spec.file}: expected an array of events`);
+      continue;
+    }
+
+    if (!rows.length && spec.required) {
+      console.warn(`[DQ] ${spec.file} is empty; required spec may not return useful metrics`);
+    }
+
+    const stats = summarizeFields(rows, spec);
+    logSpecResult(spec, stats);
+
+    for (const [field, meta] of Object.entries(spec.fields)) {
+      if (meta.required && stats.fieldStats[field].missing > 0) {
+        errors.push(`${spec.file}: ${field} missing in ${stats.fieldStats[field].missing} rows`);
+      }
+      if (stats.fieldStats[field].invalid > 0) {
+        errors.push(`${spec.file}: ${field} invalid in ${stats.fieldStats[field].invalid} rows`);
+      }
+    }
+
+    if (spec.uniqueKey && stats.duplicateTotal > 0) {
+      errors.push(`${spec.file}: ${stats.duplicateTotal} duplicate keys`);
+    }
+
+    summary.push({ spec: spec.name, stats });
+  }
+
+  if (errors.length) {
+    const message = `Data-quality gate failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`;
+    throw new Error(message);
+  }
+
+  return summary;
 }
 
 function parseArgs(argv) {
@@ -3905,174 +4557,32 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith("--")) continue;
-    const k = a.slice(2);
-    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
-    out[k] = v;
+    const key = a.slice(2);
+    const value = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
+    out[key] = value;
   }
   return out;
 }
 
-function dcg(rels) {
-  let s = 0;
-  for (let i = 0; i < rels.length; i++) {
-    const rel = rels[i];
-    const denom = Math.log2(i + 2);
-    s += rel / denom;
+function runCli() {
+  const args = parseArgs(process.argv);
+  const snapshotDir = String(args.snapshot ?? "").trim();
+  if (!snapshotDir) {
+    console.error("--snapshot is required");
+    process.exit(1);
   }
-  return s;
-}
-
-function ndcgAtK(rankedIds, truthSet, k) {
-  const rels = rankedIds.slice(0, k).map((id) => (truthSet.has(id) ? 1 : 0));
-  const ideal = Array.from({ length: Math.min(k, truthSet.size) }, () => 1);
-  const denom = dcg(ideal);
-  if (denom <= 0) return 0;
-  return dcg(rels) / denom;
-}
-
-function apAtK(rankedIds, truthSet, k) {
-  let hits = 0;
-  let sumPrec = 0;
-  const top = rankedIds.slice(0, k);
-  for (let i = 0; i < top.length; i++) {
-    if (truthSet.has(top[i])) {
-      hits += 1;
-      sumPrec += hits / (i + 1);
-    }
+  try {
+    checkSnapshotEvents(snapshotDir);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
   }
-  const denom = Math.min(truthSet.size, k);
-  return denom ? sumPrec / denom : 0;
 }
 
-const args = parseArgs(process.argv);
-const snapshotDir = String(args.snapshot || "");
-const modelDir = String(args.model || "");
-const outDir = String(args.out || modelDir || "");
-
-if (!snapshotDir) throw new Error("--snapshot is required");
-if (!modelDir) throw new Error("--model is required");
-if (!outDir) throw new Error("--out is required");
-
-const swipes = readJson(path.join(snapshotDir, "swipe_events.json"));
-const model = readJson(path.join(modelDir, "model.json"));
-const neighbors = readJson(path.join(modelDir, "neighbors.json"));
-
-// Build neighbor map
-const neighMap = new Map();
-for (const r of neighbors) {
-  const a = String(r.movie_id);
-  const arr = neighMap.get(a) ?? [];
-  arr.push({ id: String(r.neighbor_movie_id), score: Number(r.score) });
-  neighMap.set(a, arr);
+const currentFile = fileURLToPath(import.meta.url);
+if (process.argv[1] === currentFile) {
+  runCli();
 }
-
-// Build ordered likes per session
-const likesBySession = new Map();
-for (const s of swipes) {
-  if (s.action !== "like") continue;
-  const sid = String(s.session_id);
-  const arr = likesBySession.get(sid) ?? [];
-  arr.push({ movie_id: String(s.movie_id), ts_ms: Number(s.ts_ms ?? 0) });
-  likesBySession.set(sid, arr);
-}
-
-for (const [sid, arr] of likesBySession.entries()) {
-  arr.sort((a, b) => a.ts_ms - b.ts_ms);
-  const seen = new Set();
-  const dedup = [];
-  for (const x of arr) {
-    if (seen.has(x.movie_id)) continue;
-    seen.add(x.movie_id);
-    dedup.push(x);
-  }
-  likesBySession.set(sid, dedup);
-}
-
-// Offline split + eval
-const K = 10;
-let nSessions = 0;
-let sumNdcg = 0;
-let sumMap = 0;
-let sumRecall = 0;
-
-for (const arr of likesBySession.values()) {
-  if (arr.length < 3) continue;
-
-  const cut = Math.max(1, Math.floor(arr.length * 0.6));
-  const history = arr.slice(0, cut).map((x) => x.movie_id);
-  const holdout = arr.slice(cut).map((x) => x.movie_id);
-  if (!holdout.length) continue;
-
-  // Score candidates by summing neighbor scores from history
-  const scores = new Map();
-  for (const h of history) {
-    const ns = neighMap.get(h) ?? [];
-    for (const n of ns) {
-      if (history.includes(n.id)) continue;
-      scores.set(n.id, (scores.get(n.id) ?? 0) + n.score);
-    }
-  }
-
-  const ranked = Array.from(scores.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 200)
-    .map((x) => x[0]);
-
-  const truth = new Set(holdout);
-
-  const ndcg = ndcgAtK(ranked, truth, K);
-  const map = apAtK(ranked, truth, K);
-
-  let hits = 0;
-  for (const id of ranked.slice(0, K)) if (truth.has(id)) hits++;
-  const recall = truth.size ? hits / truth.size : 0;
-
-  nSessions++;
-  sumNdcg += ndcg;
-  sumMap += map;
-  sumRecall += recall;
-}
-
-const metrics = {
-  model_version: model.model_version,
-  snapshot_id: model.snapshot_id,
-  evaluated_at_ms: Date.now(),
-  eval: {
-    k: K,
-    sessions: nSessions,
-    ndcg_at_10: nSessions ? sumNdcg / nSessions : 0,
-    map_at_10: nSessions ? sumMap / nSessions : 0,
-    recall_at_10: nSessions ? sumRecall / nSessions : 0,
-  },
-};
-
-// Tiny ASCII bar chart
-function bar(x) {
-  const n = Math.max(0, Math.min(20, Math.round(x * 20)));
-  return "█".repeat(n) + "░".repeat(20 - n);
-}
-
-const report =
-  `# Phase 6 Offline Evaluation Report\n\n` +
-  `**Model:** ${metrics.model_version}  \n` +
-  `**Snapshot:** ${metrics.snapshot_id}  \n` +
-  `**Sessions evaluated:** ${metrics.eval.sessions}  \n\n` +
-  `## Metrics (k=${metrics.eval.k})\n\n` +
-  `| Metric | Value | Plot |\n` +
-  `|---|---:|---|\n` +
-  `| NDCG@10 | ${metrics.eval.ndcg_at_10.toFixed(4)} | ${bar(metrics.eval.ndcg_at_10)} |\n` +
-  `| MAP@10 | ${metrics.eval.map_at_10.toFixed(4)} | ${bar(metrics.eval.map_at_10)} |\n` +
-  `| Recall@10 | ${metrics.eval.recall_at_10.toFixed(4)} | ${bar(metrics.eval.recall_at_10)} |\n\n` +
-  `## Notes\n` +
-  `- This is an offline split inside each demo session.\n` +
-  `- Scores are based on summed neighbor similarities from historical likes.\n` +
-  `- If metrics are unstable, collect more sessions with 5+ likes each.\n`;
-
-mkdirp(outDir);
-writeJson(path.join(outDir, "metrics.json"), metrics);
-writeFile(path.join(outDir, "report.md"), report);
-
-console.log(JSON.stringify({ ok: true, out_dir: outDir, metrics }, null, 2));
 </file>
 
 <file path="tools/ml/make_load_sql.mjs">
@@ -4151,86 +4661,19 @@ sql += "COMMIT;\n";
 
 mkdirp(path.dirname(outFile));
 fs.writeFileSync(outFile, sql);
-console.log(JSON.stringify({ ok: true, out_file: outFile, rows: neighbors.length, set_current: setCurrent }, null, 2));
-</file>
-
-<file path="tools/ml/snapshot.mjs">
-import fs from "node:fs";
-import path from "node:path";
-
-function mkdirp(p) {
-  fs.mkdirSync(p, { recursive: true });
-}
-
-function readWranglerJson(p) {
-  if (!fs.existsSync(p)) return [];
-  const raw = fs.readFileSync(p, "utf8");
-  const obj = JSON.parse(raw);
-  if (Array.isArray(obj)) return obj;
-  if (obj?.result?.[0]?.results) return obj.result[0].results;
-  if (obj?.results) return obj.results;
-  return [];
-}
-
-function writeJson(p, v) {
-  mkdirp(path.dirname(p));
-  fs.writeFileSync(p, JSON.stringify(v, null, 2));
-}
-
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith("--")) continue;
-    const k = a.slice(2);
-    const v = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
-    out[k] = v;
-  }
-  return out;
-}
-
-const args = parseArgs(process.argv);
-const snapshotId = String(args.snapshot || "").trim();
-const rawDir = String(args.raw || "artifacts/ml/raw");
-const outRoot = String(args.out || "artifacts/ml/snapshots");
-
-if (!snapshotId) {
-  console.error("--snapshot is required (example: 2025-12-30)");
-  process.exit(1);
-}
-
-const swipes = readWranglerJson(path.join(rawDir, "swipe_events.json"));
-const movies = readWranglerJson(path.join(rawDir, "movies.json"));
-const movieGenres = readWranglerJson(path.join(rawDir, "movie_genres.json"));
-const tmdbGenres = readWranglerJson(path.join(rawDir, "tmdb_genres.json"));
-
-const outDir = path.join(outRoot, snapshotId);
-mkdirp(outDir);
-
-writeJson(path.join(outDir, "swipe_events.json"), swipes);
-writeJson(path.join(outDir, "movies.json"), movies);
-writeJson(path.join(outDir, "movie_genres.json"), movieGenres);
-writeJson(path.join(outDir, "tmdb_genres.json"), tmdbGenres);
-
-const manifest = {
-  snapshot_id: snapshotId,
-  created_at: new Date().toISOString(),
-  counts: {
-    swipe_events: swipes.length,
-    movies: movies.length,
-    movie_genres: movieGenres.length,
-    tmdb_genres: tmdbGenres.length,
-  },
-  files: ["swipe_events.json", "movies.json", "movie_genres.json", "tmdb_genres.json"],
-};
-
-writeJson(path.join(outDir, "manifest.json"), manifest);
-console.log(JSON.stringify({ ok: true, out_dir: outDir, manifest }, null, 2));
+console.log(
+  JSON.stringify(
+    { ok: true, out_file: outFile, rows: neighbors.length, set_current: setCurrent },
+    null,
+    2,
+  ),
+);
 </file>
 
 <file path="tools/ml/train_itemitem_cf.mjs">
 import fs from "node:fs";
 import path from "node:path";
+import { checkSnapshotEvents } from "./data-quality.mjs";
 
 function mkdirp(p) {
   fs.mkdirSync(p, { recursive: true });
@@ -4268,6 +4711,8 @@ if (!snapshotDir) throw new Error("--snapshot is required");
 if (!outDir) throw new Error("--out is required");
 if (!modelVersion) throw new Error("--model-version is required");
 
+checkSnapshotEvents(snapshotDir);
+
 const swipes = readJson(path.join(snapshotDir, "swipe_events.json"));
 const manifest = readJson(path.join(snapshotDir, "manifest.json"));
 
@@ -4296,7 +4741,8 @@ for (const [sid, arr] of likesBySession.entries()) {
 // Count: movie -> #sessions liked
 const sessionsPerMovie = new Map();
 for (const arr of likesBySession.values()) {
-  for (const x of arr) sessionsPerMovie.set(x.movie_id, (sessionsPerMovie.get(x.movie_id) ?? 0) + 1);
+  for (const x of arr)
+    sessionsPerMovie.set(x.movie_id, (sessionsPerMovie.get(x.movie_id) ?? 0) + 1);
 }
 
 // Co-occurrence counts: movie -> (neighbor -> coCount)
@@ -4365,114 +4811,6 @@ writeJson(path.join(outDir, "neighbors.json"), neighbors);
 console.log(JSON.stringify({ ok: true, out_dir: outDir, model }, null, 2));
 </file>
 
-<file path=".gitignore">
-# node dependencies
-/node_modules
-/apps/*/node_modules
-/packages/*/node_modules
-
-# build products
-/.turbo
-/.next
-/.open-next
-/apps/web/.next
-/apps/web/.open-next
-/apps/api/.open-next
-
-# tooling
-.turbo
-.wrangler
-/.wrangler
-
-# logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# system
-.DS_Store
-
-# environment
-.env*
-.dev.vars*
-data/
-
-# artifacts (raw exports are local-only)
-artifacts/ml/raw/**
-</file>
-
-<file path=".prettierignore">
-node_modules
-.next
-.turbo
-.dist
-.playwright
-playwright-report
-</file>
-
-<file path=".prettierrc.json">
-{
-  "semi": true,
-  "singleQuote": false,
-  "printWidth": 100
-}
-</file>
-
-<file path=".repomixignore">
-apps/web/cloudflare-env.d.ts
-*.svg
-</file>
-
-<file path="package.json">
-{
-  "name": "reelswipe",
-  "private": true,
-  "packageManager": "pnpm@10.26.2",
-  "scripts": {
-    "dev": "turbo run dev --parallel",
-    "build": "turbo run build",
-    "eval": "node tools/eval/eval.mjs",
-    "eval:from-d1": "node tools/eval/eval.mjs --input artifacts/eval/rows.json",
-    "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "format": "prettier . --write",
-    "format:check": "prettier . --check",
-    "test:integration": "node tools/ci/api-smoke.mjs"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.40.0",
-    "@types/node": "^20.0.0",
-    "prettier": "^3.0.0",
-    "turbo": "^2.0.0",
-    "typescript": "^5.0.0",
-    "wrangler": "4.54.0"
-  }
-}
-</file>
-
-<file path="playwright.config.ts">
-import { defineConfig } from "@playwright/test";
-
-export default defineConfig({
-  testDir: "./e2e",
-  timeout: 30_000,
-  retries: process.env.CI ? 1 : 0,
-  use: {
-    baseURL: process.env.E2E_BASE_URL || "http://localhost:3000",
-    trace: "on-first-retry",
-  },
-  reporter: [["html", { open: "never" }], ["list"]],
-});
-</file>
-
-<file path="pnpm-workspace.yaml">
-packages:
-  - "apps/*"
-  - "packages/*"
-</file>
-
 <file path="README.md">
 # ReelSwipe
 
@@ -4493,6 +4831,7 @@ This boots `apps/api` (Workers) and `apps/web` (Next/OpenNext) simultaneously.
 - `apps/web`: Next.js 15 running via OpenNext on Workers.
 - `docs/`: Architecture decisions and reference materials.
 - `.github/`: Issue/PR templates and CI workflow.
+
 ## Cloudflare checklist
 
 1. Run `pnpm wrangler login` if you haven't already.
@@ -4540,9 +4879,7 @@ This boots `apps/api` (Workers) and `apps/web` (Next/OpenNext) simultaneously.
       "outputs": []
     },
     "build": {
-      "dependsOn": [
-        "^build"
-      ]
+      "dependsOn": ["^build"]
     },
     "dev": {
       "cache": false,
