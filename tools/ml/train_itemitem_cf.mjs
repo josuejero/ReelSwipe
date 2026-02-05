@@ -68,7 +68,8 @@ for (const [sid, arr] of likesBySession.entries()) {
 // Count: movie -> #sessions liked
 const sessionsPerMovie = new Map();
 for (const arr of likesBySession.values()) {
-  for (const x of arr) sessionsPerMovie.set(x.movie_id, (sessionsPerMovie.get(x.movie_id) ?? 0) + 1);
+  for (const x of arr)
+    sessionsPerMovie.set(x.movie_id, (sessionsPerMovie.get(x.movie_id) ?? 0) + 1);
 }
 
 // Co-occurrence counts: movie -> (neighbor -> coCount)

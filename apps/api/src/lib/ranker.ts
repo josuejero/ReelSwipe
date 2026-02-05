@@ -68,19 +68,16 @@ export function rerankTwoStage(args: {
     const sourceBoost = c.source === "tmdb_trending_week" ? 0.15 : 0;
     const cf = cfRaw[i] / cfMax;
     const score =
-      0.45 * clamp01(pop) +
-      0.25 * clamp01((pref + 1) / 2) +
-      0.25 * clamp01(cf) +
-      sourceBoost;
+      0.45 * clamp01(pop) + 0.25 * clamp01((pref + 1) / 2) + 0.25 * clamp01(cf) + sourceBoost;
 
     const reasonCode =
       c.source === "tmdb_trending_week"
         ? "hybrid_trending_week"
         : cf > 0.25
-        ? "hybrid_cf"
-        : pref > 0.15
-        ? "hybrid_personalized"
-        : "hybrid_popular_recent";
+          ? "hybrid_cf"
+          : pref > 0.15
+            ? "hybrid_personalized"
+            : "hybrid_popular_recent";
 
     return {
       id: c.movie_id,

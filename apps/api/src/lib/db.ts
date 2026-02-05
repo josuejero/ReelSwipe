@@ -93,10 +93,7 @@ export async function recordRequestLog(db: D1Database, row: RequestLogRow) {
     .run();
 }
 
-export async function pruneRequestLogs(
-  db: D1Database,
-  cutoffTsMs: number,
-): Promise<void> {
+export async function pruneRequestLogs(db: D1Database, cutoffTsMs: number): Promise<void> {
   await db.prepare("DELETE FROM request_logs WHERE ts_ms < ?").bind(cutoffTsMs).run();
 }
 
@@ -221,7 +218,9 @@ export async function getCurrentModelVersion(env: Env): Promise<string> {
 
 export async function modelVersionExists(env: Env, modelVersion: string): Promise<boolean> {
   const row = await one<{ n: number }>(
-    env.DB.prepare("SELECT COUNT(*) AS n FROM model_versions WHERE model_version = ?1").bind(modelVersion),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM model_versions WHERE model_version = ?1").bind(
+      modelVersion,
+    ),
   );
   return Number(row?.n ?? 0) > 0;
 }

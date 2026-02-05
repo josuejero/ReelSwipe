@@ -116,7 +116,9 @@ function computeReport(rows, k = 10) {
 function renderMarkdown(report) {
   const lines = [];
   lines.push(`# ReelSwipe Offline Evaluation`);
-  lines.push(`Interpret these as sanity metrics. Use them to compare model versions, not to claim truth.`);
+  lines.push(
+    `Interpret these as sanity metrics. Use them to compare model versions, not to claim truth.`,
+  );
   lines.push("");
 
   lines.push(`## Summary (k=${report.k})`);
@@ -124,7 +126,9 @@ function renderMarkdown(report) {
   lines.push(`| model_version | decks | impressions | NDCG@10 | MAP@10 |`);
   lines.push(`|---|---:|---:|---:|---:|`);
   for (const m of report.models) {
-    lines.push(`| ${m.model_version} | ${m.decks} | ${m.impressions} | ${m.ndcg_at_10.toFixed(4)} | ${m.map_at_10.toFixed(4)} |`);
+    lines.push(
+      `| ${m.model_version} | ${m.decks} | ${m.impressions} | ${m.ndcg_at_10.toFixed(4)} | ${m.map_at_10.toFixed(4)} |`,
+    );
   }
   lines.push("");
 
@@ -140,7 +144,9 @@ function renderMarkdown(report) {
   lines.push(`| deckKey | model | impressions | positives | NDCG@10 | MAP@10 |`);
   lines.push(`|---|---|---:|---:|---:|---:|`);
   for (const d of report.perDeckSample) {
-    lines.push(`| ${d.deckKey} | ${d.modelVersion} | ${d.impressions} | ${d.positives} | ${d.ndcg.toFixed(4)} | ${d.map.toFixed(4)} |`);
+    lines.push(
+      `| ${d.deckKey} | ${d.modelVersion} | ${d.impressions} | ${d.positives} | ${d.ndcg.toFixed(4)} | ${d.map.toFixed(4)} |`,
+    );
   }
 
   lines.push("");
@@ -150,8 +156,12 @@ function renderMarkdown(report) {
 // -------- main --------
 const args = process.argv.slice(2);
 const input = args.includes("--input") ? args[args.indexOf("--input") + 1] : null;
-const outMd = args.includes("--out-md") ? args[args.indexOf("--out-md") + 1] : "artifacts/eval/report.md";
-const outJson = args.includes("--out-json") ? args[args.indexOf("--out-json") + 1] : "artifacts/eval/report.json";
+const outMd = args.includes("--out-md")
+  ? args[args.indexOf("--out-md") + 1]
+  : "artifacts/eval/report.md";
+const outJson = args.includes("--out-json")
+  ? args[args.indexOf("--out-json") + 1]
+  : "artifacts/eval/report.json";
 
 let rows;
 if (input) {

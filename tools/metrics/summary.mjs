@@ -24,9 +24,7 @@ const skips = swipes.filter((s) => s.action === "skip").length;
 
 const likeRate = totalSwipes ? likes / totalSwipes : 0;
 
-const dwell = swipes
-  .map((s) => Number(s.dwell_ms))
-  .filter((n) => Number.isFinite(n) && n >= 0);
+const dwell = swipes.map((s) => Number(s.dwell_ms)).filter((n) => Number.isFinite(n) && n >= 0);
 
 const meanDwell = dwell.length ? dwell.reduce((a, b) => a + b, 0) / dwell.length : 0;
 

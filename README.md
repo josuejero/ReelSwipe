@@ -17,6 +17,7 @@ This boots `apps/api` (Workers) and `apps/web` (Next/OpenNext) simultaneously.
 - `apps/web`: Next.js 15 running via OpenNext on Workers.
 - `docs/`: Architecture decisions and reference materials.
 - `.github/`: Issue/PR templates and CI workflow.
+
 ## Cloudflare checklist
 
 1. Run `pnpm wrangler login` if you haven't already.

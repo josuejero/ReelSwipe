@@ -24,24 +24,21 @@ export function ClientDeck() {
 
   const canReset = useMemo(() => !!sessionId, [sessionId]);
 
-  const loadDeck = useCallback(
-    async (sid: string, silent = false) => {
-      if (!silent) {
-        setStatus("loading");
-        setError(null);
-      }
-      try {
-        const { deck_id, deck } = await fetchDeck(sid, 20);
-        setDeckId(deck_id);
-        setDeck(deck);
-        setStatus("ready");
-      } catch (e) {
-        setStatus("error");
-        setError(e instanceof Error ? e.message : "unknown error");
-      }
-    },
-    []
-  );
+  const loadDeck = useCallback(async (sid: string, silent = false) => {
+    if (!silent) {
+      setStatus("loading");
+      setError(null);
+    }
+    try {
+      const { deck_id, deck } = await fetchDeck(sid, 20);
+      setDeckId(deck_id);
+      setDeck(deck);
+      setStatus("ready");
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof Error ? e.message : "unknown error");
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +102,9 @@ export function ClientDeck() {
       ) : status === "error" ? (
         <div className="w-[360px] rounded-3xl bg-red-500/10 p-4 ring-1 ring-red-500/20">
           <p className="text-sm text-red-200">{error ?? "Failed"}</p>
-          <p className="mt-2 text-xs text-white/60">Check that the API is running and NEXT_PUBLIC_API_BASE is set.</p>
+          <p className="mt-2 text-xs text-white/60">
+            Check that the API is running and NEXT_PUBLIC_API_BASE is set.
+          </p>
         </div>
       ) : deckId ? (
         <SwipeDeck

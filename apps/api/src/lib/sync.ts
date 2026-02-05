@@ -1,10 +1,5 @@
 import type { Env } from "../types";
-import {
-  fetchMovieGenres,
-  fetchTrendingWeek,
-  releaseYear,
-  tmdbPosterUrl,
-} from "./tmdb";
+import { fetchMovieGenres, fetchTrendingWeek, releaseYear, tmdbPosterUrl } from "./tmdb";
 import { rebuildMovieGenresForMovies, upsertGenres, upsertMovies } from "./db";
 
 export async function syncGenres(env: Env) {
@@ -35,7 +30,10 @@ export async function syncTrendingMovies(env: Env) {
   }));
 
   const result = await upsertMovies(env, movies, now);
-  await rebuildMovieGenresForMovies(env, movies.map((m) => m.movie_id));
+  await rebuildMovieGenresForMovies(
+    env,
+    movies.map((m) => m.movie_id),
+  );
 
   return result;
 }

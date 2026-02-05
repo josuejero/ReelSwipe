@@ -73,4 +73,10 @@ sql += "COMMIT;\n";
 
 mkdirp(path.dirname(outFile));
 fs.writeFileSync(outFile, sql);
-console.log(JSON.stringify({ ok: true, out_file: outFile, rows: neighbors.length, set_current: setCurrent }, null, 2));
+console.log(
+  JSON.stringify(
+    { ok: true, out_file: outFile, rows: neighbors.length, set_current: setCurrent },
+    null,
+    2,
+  ),
+);

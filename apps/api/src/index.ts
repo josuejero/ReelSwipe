@@ -313,19 +313,17 @@ async function handle(req: Request, env: Env, reqId: string, origin: string) {
     if (!(await requireAdmin(req, env))) return withCors(unauthorized(reqId), origin);
 
     const current = await getCurrentModelVersion(env);
-    const known = await env.DB
-      .prepare(
-        `SELECT model_version, snapshot_id, algo, created_at_ms
+    const known = await env.DB.prepare(
+      `SELECT model_version, snapshot_id, algo, created_at_ms
            FROM model_versions
           ORDER BY created_at_ms DESC
           LIMIT 25`,
-      )
-      .all<{
-        model_version: string;
-        snapshot_id: string;
-        algo: string;
-        created_at_ms: number;
-      }>();
+    ).all<{
+      model_version: string;
+      snapshot_id: string;
+      algo: string;
+      created_at_ms: number;
+    }>();
 
     return withCors(
       ok({ current_model_version: current, known_models: known.results ?? [] }, reqId),

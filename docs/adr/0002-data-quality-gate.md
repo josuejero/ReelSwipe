@@ -4,9 +4,11 @@
 - Date: 2026-01-23
 
 ## Context
+
 Offline training and evaluation jobs (including the phased GitHub workflow and any scheduled retrains) currently assume the swipe + impression logs are well-formed. Bad data (missing keys, null critical fields, duplicate events) directly corrupts the item-item CF model that powers ReelSwipe metrics and release decisions. We need a very early gate so those jobs fail fast and stop shipping data that cannot be trusted.
 
 ## Decision
+
 - Define a concise contract for each event type we ingest for modeling/metrics:
   - **Swipe event** (`swipe_events.json`): represents a user swipe with fields
     - `event_id` (string, global primary key, required)
@@ -37,6 +39,7 @@ Offline training and evaluation jobs (including the phased GitHub workflow and a
   - Teams regenerating metrics artifacts (`tools/eval/eval.mjs` or similar) are encouraged to run the CLI gate before pointing the metric pipeline at a real snapshot; the helper is already in place if extra data is supplied.
 
 ## Consequences
+
 - Training/eval jobs now fail quickly when required fields are missing or duplicates exist, preventing stale or corrupt event data from tainting models or dashboards.
 - The gate also doubles as documentation: the ADR plus `tools/ml/data-quality.mjs` spells out the critical schema, data types, and thresholds people need to hit when exporting snapshots from D1.
 - Any future event-type additions can be accommodated by appending another spec to `EVENT_SPECS` so completeness/uniqueness stay enforced.

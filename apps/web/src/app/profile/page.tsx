@@ -60,9 +60,7 @@ export default function ProfilePage() {
         </button>
       </section>
 
-      {err ? (
-        <div className="rounded border p-3 text-sm">Error: {err}</div>
-      ) : null}
+      {err ? <div className="rounded border p-3 text-sm">Error: {err}</div> : null}
 
       {data ? (
         <>
@@ -119,7 +117,9 @@ export default function ProfilePage() {
                     <div className="opacity-80">{r.action}</div>
                   </div>
                   <div className="text-xs opacity-70 mt-1">{fmt(r.ts_ms)}</div>
-                  <div className="text-xs mt-2">Genres: {(r.genres ?? []).join(", ") || "(none)"}</div>
+                  <div className="text-xs mt-2">
+                    Genres: {(r.genres ?? []).join(", ") || "(none)"}
+                  </div>
                 </div>
               ))}
             </div>

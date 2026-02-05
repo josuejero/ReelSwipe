@@ -42,7 +42,7 @@ export function releaseYear(releaseDate?: string) {
 async function fetchTmdbJson<T>(
   env: Env,
   path: string,
-  params: Record<string, string | number | undefined> = {}
+  params: Record<string, string | number | undefined> = {},
 ): Promise<T> {
   assertKey(env);
 

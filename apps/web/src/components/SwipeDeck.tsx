@@ -53,7 +53,7 @@ export function SwipeDeck({
         }
       }, 230);
     },
-    [top, onSwipe]
+    [top, onSwipe],
   );
 
   const snapBack = () => {
@@ -156,7 +156,9 @@ export function SwipeDeck({
         </button>
       </div>
 
-      <p className="mt-3 text-center text-xs text-white/50">Tip: focus the deck and use ArrowLeft / ArrowRight</p>
+      <p className="mt-3 text-center text-xs text-white/50">
+        Tip: focus the deck and use ArrowLeft / ArrowRight
+      </p>
     </div>
   );
 }

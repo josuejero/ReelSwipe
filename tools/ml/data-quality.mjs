@@ -70,7 +70,9 @@ const TYPE_CHECKS = {
 };
 
 function isMissing(value) {
-  return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+  return (
+    value === undefined || value === null || (typeof value === "string" && value.trim() === "")
+  );
 }
 
 function summarizeFields(rows, spec) {
@@ -165,7 +167,9 @@ function logSpecResult(spec, stats) {
       .slice(0, 20)
       .map(([key, count]) => `${key} (${count})`)
       .join(", ");
-    console.log(`[DQ]   duplicates: ${stats.duplicateTotal} rows (${dupRate}); samples: ${samples}`);
+    console.log(
+      `[DQ]   duplicates: ${stats.duplicateTotal} rows (${dupRate}); samples: ${samples}`,
+    );
   } else {
     console.log(`[DQ]   duplicates: 0 rows`);
   }
