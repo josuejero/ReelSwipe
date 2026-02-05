@@ -44,7 +44,7 @@
 				},
 			],
 			"vars": {
-				"CORS_ORIGIN": "https://<YOUR_WEB_PROD_DOMAIN>",
+				"CORS_ORIGIN": "https://reelswipe-web-prod.josuejero.workers.dev",
 				"LOG_SAMPLE_RATE": "0.2",
 				"REQUEST_LOG_RETENTION_DAYS": "14",
 			},

@@ -38,13 +38,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Build Web
-        run: pnpm --dir apps/web build
-        env:
-          NEXT_PUBLIC_API_BASE: ${{ secrets.PROD_API_BASE }}
-
       - name: Deploy Web
         run: pnpm --dir apps/web deploy --env ${{ inputs.environment }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEXT_PUBLIC_API_BASE: ${{ secrets.PROD_API_BASE }}
+          API_ADMIN_TOKEN: ${{ secrets.API_ADMIN_TOKEN }}

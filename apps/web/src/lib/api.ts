@@ -33,7 +33,27 @@ export type ProfilePayload = {
   }[];
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
+const RAW_API_BASE = (process.env.NEXT_PUBLIC_API_BASE ?? "").trim();
+
+function normalizeBase(input: string) {
+  return input.replace(/\/+$/, "");
+}
+
+export function getApiBase() {
+  const base = normalizeBase(RAW_API_BASE);
+
+  if (!base) {
+    throw new Error("Missing NEXT_PUBLIC_API_BASE (set it during build).");
+  }
+
+  if (typeof window !== "undefined" && window.location.protocol === "https:" && base.startsWith("http://")) {
+    throw new Error(`NEXT_PUBLIC_API_BASE must be https in production (got ${base}).`);
+  }
+
+  return base;
+}
+
+const API_BASE = getApiBase();
 
 async function mustJson(res: Response) {
   if (!res.ok) {
@@ -43,21 +63,29 @@ async function mustJson(res: Response) {
   return res.json();
 }
 
+async function safeFetch<T>(url: URL, options?: RequestInit): Promise<T> {
+  try {
+    const res = await fetch(url.toString(), options);
+    return (await mustJson(res)) as T;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Fetch failed: ${url.toString()} (${msg})`);
+  }
+}
+
 export async function fetchDeck(sessionId: string, limit = 20): Promise<DeckPayload> {
-  const url = new URL(API_BASE + "/v1/deck");
+  const url = new URL("/v1/deck", API_BASE);
   url.searchParams.set("session_id", sessionId);
   url.searchParams.set("limit", String(limit));
 
-  const res = await fetch(url.toString(), { method: "GET" });
-  return (await mustJson(res)) as DeckPayload;
+  return await safeFetch<DeckPayload>(url, { method: "GET" });
 }
 
 export async function fetchProfile(sessionId: string): Promise<ProfilePayload> {
-  const url = new URL(API_BASE + "/v1/profile");
+  const url = new URL("/v1/profile", API_BASE);
   url.searchParams.set("session_id", sessionId);
 
-  const res = await fetch(url.toString(), { method: "GET" });
-  return (await mustJson(res)) as ProfilePayload;
+  return await safeFetch<ProfilePayload>(url, { method: "GET" });
 }
 
 export async function logSwipe(args: {
@@ -70,7 +98,8 @@ export async function logSwipe(args: {
 }) {
   const idempotency = `${args.session_id}:${args.deck_id}:${args.movie_id}:${args.action}:${args.ts_ms}`;
 
-  const res = await fetch(API_BASE + "/v1/events/swipe", {
+  const url = new URL("/v1/events/swipe", API_BASE);
+  await safeFetch<void>(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -78,6 +107,4 @@ export async function logSwipe(args: {
     },
     body: JSON.stringify(args),
   });
-
-  await mustJson(res);
 }

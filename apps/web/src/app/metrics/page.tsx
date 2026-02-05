@@ -1,3 +1,5 @@
+import { getApiBase } from "@/lib/api";
+
 type MetricsPayload = {
   window_ms: number;
   since_ms: number;
@@ -21,8 +23,15 @@ function fmtMs(x: number | null) {
 }
 
 export default async function MetricsPage() {
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8787";
+  let API_BASE: string | null = null;
+  let baseError: string | null = null;
   const token = process.env.API_ADMIN_TOKEN;
+
+  try {
+    API_BASE = getApiBase();
+  } catch (err) {
+    baseError = err instanceof Error ? err.message : String(err);
+  }
 
   if (!token) {
     return (
@@ -31,6 +40,17 @@ export default async function MetricsPage() {
         <p>
           Missing <code>API_ADMIN_TOKEN</code>. Add it to <code>apps/web/.env.local</code> (local)
           and Cloudflare Pages env vars (deploy).
+        </p>
+      </main>
+    );
+  }
+
+  if (!API_BASE || baseError) {
+    return (
+      <main style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1>/metrics</h1>
+        <p>
+          <code>NEXT_PUBLIC_API_BASE</code> must be configured. {baseError ?? "Check the build-time env var."}
         </p>
       </main>
     );
