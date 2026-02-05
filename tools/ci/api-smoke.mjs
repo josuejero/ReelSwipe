@@ -36,26 +36,30 @@ async function main() {
   await run(
     "pnpm",
     [
-      "--dir", "apps/api",
-      "exec", "wrangler",
-      "d1", "migrations", "apply", "DB",
+      "--dir",
+      "apps/api",
+      "exec",
+      "wrangler",
+      "d1",
+      "migrations",
+      "apply",
+      "DB",
       "--local",
-      "--persist-to", PERSIST_DIR,
+      "--persist-to",
+      PERSIST_DIR,
     ],
     // Prevent any interactive prompts during CI.
     { env: { ...process.env, CI: "1" } },
   );
 
-  const child = spawn("pnpm", [
-    "--dir", "apps/api",
-    "exec", "wrangler",
-    "dev",
-    "--port", "8787",
-    "--persist-to", PERSIST_DIR,
-  ], {
-    stdio: "inherit",
-    env: { ...process.env },
-  });
+  const child = spawn(
+    "pnpm",
+    ["--dir", "apps/api", "exec", "wrangler", "dev", "--port", "8787", "--persist-to", PERSIST_DIR],
+    {
+      stdio: "inherit",
+      env: { ...process.env },
+    },
+  );
 
   try {
     await waitFor(`${API}/health`);
